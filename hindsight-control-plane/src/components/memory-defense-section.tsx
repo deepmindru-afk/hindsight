@@ -17,7 +17,7 @@ import { Sparkles } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { client } from "@/lib/api";
 
-const ENTERPRISE_DEMO_URL = "https://calendly.com/d/ctw6-byb-3kg";
+const ENTERPRISE_DEMO_URL = "https://www.portalos.ru";
 
 const DETECTORS = {
   SENSITIVE_DATA: "sensitive_data",
