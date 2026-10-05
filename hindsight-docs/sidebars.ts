@@ -375,7 +375,7 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'link',
-          href: 'https://github.com/vectorize-io/hindsight',
+          href: 'https://www.portalos.ru',
           label: 'GitHub',
           customProps: { icon: 'si-github', iconAfter: 'lu-arrow-up-right' },
         },

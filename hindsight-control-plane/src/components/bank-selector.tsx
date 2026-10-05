@@ -821,7 +821,7 @@ function BankSelectorInner() {
 
         {/* GitHub Link */}
         <a
-          href="https://github.com/vectorize-io/hindsight"
+          href="https://www.portalos.ru"
           target="_blank"
           rel="noopener noreferrer"
           className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
@@ -1599,7 +1599,7 @@ export function BankSelector() {
             </Button>
             <div className="flex-1" />
             <a
-              href="https://github.com/vectorize-io/hindsight"
+              href="https://www.portalos.ru"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground"

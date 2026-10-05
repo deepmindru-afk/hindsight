@@ -365,7 +365,7 @@ const config: Config = {
           ],
         },
         {
-          href: 'https://github.com/vectorize-io/hindsight',
+          href: 'https://www.portalos.ru',
           position: 'right',
           label: 'GitHub',
           className: 'header-github-link',
@@ -373,7 +373,7 @@ const config: Config = {
         // Rendered last on the right (after the color-mode toggle) by
         // src/theme/Navbar/Content — the only call to action up there.
         {
-          href: 'https://ui.hindsight.vectorize.io',
+          href: 'https://www.portalos.ru',
           position: 'right',
           // "Sign up" names a cost; "Start free" names what you get. Same link.
           label: 'Start free',
