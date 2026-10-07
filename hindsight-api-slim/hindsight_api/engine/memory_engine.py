@@ -677,6 +677,7 @@ from .reflect.tools import (
     tool_search_mental_models,
     tool_search_observations,
 )
+from .remote_retry import is_transient_remote_error
 from .response_models import (
     VALID_RECALL_FACT_TYPES,
     ConsolidationStrategiesPreview,
@@ -2635,7 +2636,7 @@ class MemoryEngine(MemoryEngineInterface):
         self._db_acquire_timeout = db_acquire_timeout if db_acquire_timeout is not None else config.db_acquire_timeout
         self._db_statement_timeout = config.db_statement_timeout
         self._db_max_parallel_workers_per_gather = config.db_max_parallel_workers_per_gather
-        self._entity_trgm_similarity_threshold = config.entity_trgm_similarity_threshold
+        self._entity_trgm_probe_threshold = config.entity_trgm_probe_threshold
         self._entity_merge_min_similarity = config.entity_merge_min_similarity
         self._run_migrations = run_migrations
         self._retain_entity_lookup = config.retain_entity_lookup
@@ -4515,9 +4516,11 @@ class MemoryEngine(MemoryEngineInterface):
             # row except the prose error_message (#3274).
             await self._write_refresh_failure_metadata(task_dict.get("operation_id"), e)
             raise
-        except OperationCancelledError:
-            # Not a failed refresh: the caller went away. It records no outcome and
-            # no history, exactly like the deferral above.
+        except (OperationCancelledError, ProviderRateLimitResetError):
+            # Not a failed refresh: the caller went away, or the provider said when its
+            # quota reopens and the worker parks the operation until then. Neither
+            # records an outcome or history, exactly like the deferral above — and
+            # neither may pause automatic refresh (#5394).
             raise
         except Exception as e:
             # Anything else that escaped the refresh — a provider error the reflect
@@ -4542,6 +4545,9 @@ class MemoryEngine(MemoryEngineInterface):
                 outcome="refresh_failed_error",
                 failure_reason="unexpected_error",
                 error_message=f"{type(e).__name__}: {e}",
+                # A provider that is down or rate-limited will answer later; only a
+                # failure that would repeat on the same prompt pauses (#5394).
+                pause_automatic=not is_transient_remote_error(e),
             )
             raise
         if refreshed is None:
@@ -5895,7 +5901,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         stmt_timeout_s = self._db_statement_timeout
         max_parallel_gather = self._db_max_parallel_workers_per_gather
-        trgm_similarity_threshold = self._entity_trgm_similarity_threshold
+        trgm_similarity_threshold = self._entity_trgm_probe_threshold
         text_search_extension = get_config().text_search_extension
 
         # Per-connection initialization callback (PostgreSQL-specific for now)
@@ -7364,6 +7370,20 @@ class MemoryEngine(MemoryEngineInterface):
                     if retain_session is not None:
                         await retain_session.abort()
                     if redo_from is None or attempt == self._APPEND_CONFLICT_ATTEMPTS:
+                        if redo_from is not None:
+                            # Say which turn is being dropped. Silence here reads as an ordinary
+                            # store error, and the operation-level retry that follows re-runs the
+                            # whole submission for a reason nothing recorded.
+                            #
+                            # The document id rides on the content item, same as in
+                            # `_retain_batch_with_append_retry`; the parameter is often None.
+                            doc_label = document_id or next(
+                                (item.get("document_id") for item in redo_from if item.get("document_id")), None
+                            )
+                            logger.warning(
+                                f"Append session for bank {bank_id} document {doc_label} lost its race "
+                                f"{attempt} times; failing so the operation is retried"
+                            )
                         raise
                     logger.info(f"Append session for bank {bank_id} lost its race (attempt {attempt}) — redoing")
                     await asyncio.sleep(random.uniform(0.05, 0.25) * attempt)
@@ -17823,7 +17843,6 @@ class MemoryEngine(MemoryEngineInterface):
                 document_tokens = count_prompt_tokens(current_content)
                 user_prompt = build_structured_delta_prompt(
                     current_document_json=current_doc.model_dump_json(),
-                    candidate_markdown=reflect_result.text,
                     supporting_facts=supporting_facts,
                     source_query=source_query,
                     max_output_tokens=delta_max_tokens,
@@ -18828,6 +18847,7 @@ class MemoryEngine(MemoryEngineInterface):
         outcome: "RefreshOperationOutcome",
         failure_reason: "RefreshFailureReason",
         error_message: str,
+        pause_automatic: bool = True,
     ) -> None:
         """Record a refusal to write: stamp the model, and add a row to its history.
 
@@ -18840,6 +18860,10 @@ class MemoryEngine(MemoryEngineInterface):
         leaves ``last_refreshed_at`` behind, so the model still looks stale and the
         scheduler used to queue the same doomed refresh every tick, paying the LLM
         each time (#4532). See ``_automatic_refresh_paused``.
+
+        ``pause_automatic=False`` writes the history row but not the stamp: a
+        transient provider failure (429, 5xx, timeout) is not the same doomed prompt,
+        and pausing on it froze pages for days after a rate limit had lifted (#5394).
 
         Best-effort by design — the refresh has already failed and is about to
         raise; losing either write must not also swallow that exception, and the
@@ -18860,12 +18884,13 @@ class MemoryEngine(MemoryEngineInterface):
                 # Stamp first, on its own statement: it is the one that stops the
                 # automatic triggers, so it must land even if the audit row below
                 # (optional, and capped) cannot be written.
-                await conn.execute(
-                    f"UPDATE {fq_table('mental_models')} SET last_refresh_failed_at = now() "
-                    "WHERE bank_id = $1 AND id = $2",
-                    bank_id,
-                    mental_model_id,
-                )
+                if pause_automatic:
+                    await conn.execute(
+                        f"UPDATE {fq_table('mental_models')} SET last_refresh_failed_at = now() "
+                        "WHERE bank_id = $1 AND id = $2",
+                        bank_id,
+                        mental_model_id,
+                    )
                 if config.enable_mental_model_history:
                     await self._insert_mental_model_history_row(
                         conn,
@@ -23207,6 +23232,9 @@ class MemoryEngine(MemoryEngineInterface):
         and fails the same way, forever, on the caller's LLM bill (#4532). It stays
         paused until a refresh succeeds, which only an explicit one can do now: that
         moves ``last_refreshed_at`` past ``last_refresh_failed_at``.
+
+        A temporary provider failure (rate limit, 5xx, quota reset) never sets
+        ``last_refresh_failed_at``, so it does not pause anything (#5394).
         """
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
