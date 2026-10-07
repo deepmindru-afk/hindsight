@@ -369,6 +369,11 @@ _VALIDATE_SQL_SCHEMAS = True
 _CONSOLIDATION_RETRY_BACKOFF_BASE_SECONDS = 5
 _CONSOLIDATION_RETRY_BACKOFF_MAX_SECONDS = 1800  # 30 min cap
 
+# How long a killed or failed chunked retain waits for its in-flight sub-batches to
+# honour cancel (#5372). A cancelled sub-batch rolls its transaction back promptly;
+# the bound only matters for one stuck in code that ignores cancellation.
+_SUBBATCH_CANCEL_SETTLE_SECONDS = 30
+
 # Upper bound on the per-bank LLM connectivity probe so a hung provider can't wedge
 # the request. The probe is a deliberate, non-polled action (POST .../health/llm).
 _LLM_PROBE_TIMEOUT_SECONDS = 10.0
@@ -1688,10 +1693,8 @@ from .storage import bank_storage_prefix
 def _truncate_query_to_token_limit(query: str, max_query_tokens: int, log_prefix: str = "") -> str:
     """Bound a recall query to ``max_query_tokens`` tokens (``0`` disables the cap).
 
-    Truncation, not rejection: this runs on the path every *internal* caller takes
-    (consolidation, reflect tools, MCP tools, the context extension), and those must
-    degrade to a shorter query rather than fail. The REST handler keeps its own HTTP
-    400 for client-supplied queries.
+    Truncation, not rejection: every caller (REST, consolidation, reflect tools, MCP
+    tools, the context extension) degrades to a shorter query rather than failing.
     """
     # A token is never shorter than one character, so a query of at most
     # `max_query_tokens` characters cannot exceed the cap — skip tokenizing it.
@@ -6962,6 +6965,7 @@ class MemoryEngine(MemoryEngineInterface):
         # and the global config refuses the access rather than let a per-bank override be silently
         # ignored.
         from .memories import get_memories as _get_memories_session
+        from .memories.base import StoreWriteConflict
 
         _store = _get_memories_session()
         retain_session = None
@@ -7253,6 +7257,30 @@ class MemoryEngine(MemoryEngineInterface):
                             raise r
                         collected.append(r)
             finally:
+                # Stop every sub-batch still in flight before anything else (#5372). This loop is
+                # left early in two ways the cooperative check above never sees: the worker's
+                # wall-clock kill (RETAIN_WALL_TIMEOUT) cancels us mid-`asyncio.wait`, and a sibling
+                # raising at `t.result()` exits with the others still running. Before this, those
+                # tasks kept extracting and committed facts minutes after the operation was marked
+                # failed — and after the per-document lock that `failed` releases, so a queued
+                # successor ran alongside them on the same document.
+                leftover = [t for t in pending if not t.done()]
+                for t in leftover:
+                    t.cancel()
+                if leftover:
+                    # ponytail: bounded so a sub-batch that swallows its cancel cannot wedge the kill;
+                    # one that outlives this is logged, not awaited.
+                    settled, stuck = await asyncio.wait(leftover, timeout=_SUBBATCH_CANCEL_SETTLE_SECONDS)
+                    # Retrieve what a slice raised while unwinding, so asyncio does not log
+                    # "Task exception was never retrieved"; the error that ended the loop wins.
+                    for t in settled:
+                        if not t.cancelled():
+                            t.exception()
+                    if stuck:
+                        logger.warning(
+                            f"[BATCH_RETAIN] bank={bank_id} {len(stuck)} sub-batch(es) still running "
+                            f"{_SUBBATCH_CANCEL_SETTLE_SECONDS}s after cancel"
+                        )
                 # In a `finally` so a failed sub-batch still writes what its siblings accumulated.
                 # Otherwise the last slices since the previous doubling are lost, and for a document
                 # that never reached a flush that is the whole body — leaving memories with no
@@ -7300,28 +7328,54 @@ class MemoryEngine(MemoryEngineInterface):
             # The commit is inside the same `try`, so a commit that fails aborts too: it releases
             # whatever the session still buffers instead of leaving it to the garbage collector.
             # This is the shape `transfer/importer.py` already uses around its session.
-            try:
-                sub_batch_outcome = await self._retain_batch_async_internal(
-                    bank_id=bank_id,
-                    contents=contents,
-                    request_context=request_context,
-                    document_id=document_id,
-                    is_first_batch=True,
-                    fact_type_override=fact_type_override,
-                    document_tags=document_tags,
-                    operation_id=operation_id,
-                    strategy=strategy,
-                    outbox_callback=outbox_callback,
-                    outbox_callback_factory=outbox_callback_factory,
-                    retain_session=retain_session,
-                )
-                if retain_session is not None:
-                    async with _retain_timing_mod.timed("store.commit"):
-                        await retain_session.commit()
-            except BaseException:
-                if retain_session is not None:
-                    await retain_session.abort()
-                raise
+            #
+            # An append's session write is a compare-and-set on the document it read, and it can
+            # lose that race at commit — after `_retain_batch_with_append_retry`, which only sees
+            # the pipeline, has returned. Losing it is the same event that retry handles (the
+            # document moved under the append), so it gets the same answer: redo the append on the
+            # newer document, in a fresh session, from a pristine copy of the submission (the
+            # pipeline consumes its input).
+            redo_from = (
+                copy.deepcopy(contents)
+                if retain_session is not None and any(item.get("update_mode") == "append" for item in contents)
+                else None
+            )
+            for attempt in range(1, self._APPEND_CONFLICT_ATTEMPTS + 1):
+                try:
+                    sub_batch_outcome = await self._retain_batch_async_internal(
+                        bank_id=bank_id,
+                        contents=contents,
+                        request_context=request_context,
+                        document_id=document_id,
+                        is_first_batch=True,
+                        fact_type_override=fact_type_override,
+                        document_tags=document_tags,
+                        operation_id=operation_id,
+                        strategy=strategy,
+                        outbox_callback=outbox_callback,
+                        outbox_callback_factory=outbox_callback_factory,
+                        retain_session=retain_session,
+                    )
+                    if retain_session is not None:
+                        async with _retain_timing_mod.timed("store.commit"):
+                            await retain_session.commit()
+                    break
+                except StoreWriteConflict:
+                    if retain_session is not None:
+                        await retain_session.abort()
+                    if redo_from is None or attempt == self._APPEND_CONFLICT_ATTEMPTS:
+                        raise
+                    logger.info(f"Append session for bank {bank_id} lost its race (attempt {attempt}) — redoing")
+                    await asyncio.sleep(random.uniform(0.05, 0.25) * attempt)
+                    contents = copy.deepcopy(redo_from)
+                    # The lost attempt did not complete, so its outbox events must not be
+                    # delivered; the redo records its own.
+                    pending_outbox_callbacks.clear()
+                    retain_session = await _store.begin_retain(bank_id=bank_id, config=_session_config)
+                except BaseException:
+                    if retain_session is not None:
+                        await retain_session.abort()
+                    raise
             result = sub_batch_outcome.memory_ids
             total_usage = sub_batch_outcome.usage
             total_processed_content_tokens = sub_batch_outcome.processed_content_tokens
@@ -8793,15 +8847,15 @@ class MemoryEngine(MemoryEngineInterface):
         # here protects every sink that the query flows into.
         query = sanitize_text(query) or ""
 
-        # Bound the query length at the engine ingress. The REST handler rejects an
-        # over-long query with HTTP 400 (PR #298), but that check only guards the one
-        # public entry point: consolidation, the reflect tools, the MCP tools and the
-        # context extension all call this method directly. Consolidation recalls with
-        # the *whole fact text* as the query, so a degenerate extraction (58k words,
-        # 4 distinct) became a 54k-term OR tsquery whose evaluation blew Postgres'
-        # stack depth (SQLSTATE 54001) and wedged the bank's consolidation for a week
-        # (issue #3134). Truncating here keeps every internal caller working on a
-        # bounded query instead of failing.
+        # Bound the query length at the engine ingress, for every caller (REST,
+        # consolidation, reflect tools, MCP tools, context extension). Consolidation
+        # recalls with the *whole fact text* as the query, so a degenerate extraction
+        # (58k words, 4 distinct) became a 54k-term OR tsquery whose evaluation blew
+        # Postgres' stack depth (SQLSTATE 54001) and wedged the bank's consolidation for
+        # a week (issue #3134). The REST handler used to reject an over-cap query with
+        # HTTP 400 instead (PR #298); that was dropped because clients cut queries by
+        # characters, and code packs enough tokens per character that a 2000-character
+        # prompt from the coding-agents plugin failed recall outright.
         query = _truncate_query_to_token_limit(
             query,
             get_config().recall_max_query_tokens,
