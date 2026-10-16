@@ -961,6 +961,8 @@ export class HindsightClient {
       consolidationStrategies?: Record<string, unknown>[];
       /** Consolidate automatically after retain() rather than on demand. */
       enableAutoConsolidation?: boolean;
+      /** When the server has a decision model, let it settle restatements, new facts and chatter before the consolidation LLM call. */
+      consolidationUseDecisionModel?: boolean;
       /** Number of LLM calls to batch during consolidation. */
       consolidationLlmBatchSize?: number;
       /** Concurrent LLM calls during consolidation. */
@@ -1068,6 +1070,8 @@ export class HindsightClient {
       updates.consolidation_strategies = options.consolidationStrategies;
     if (options.enableAutoConsolidation !== undefined)
       updates.enable_auto_consolidation = options.enableAutoConsolidation;
+    if (options.consolidationUseDecisionModel !== undefined)
+      updates.consolidation_use_decision_model = options.consolidationUseDecisionModel;
     if (options.consolidationLlmBatchSize !== undefined)
       updates.consolidation_llm_batch_size = options.consolidationLlmBatchSize;
     if (options.consolidationLlmParallelism !== undefined)
@@ -1374,15 +1378,19 @@ export class HindsightClient {
 
   /**
    * Refresh a mental model to update with current knowledge.
+   *
+   * `mode: "full"` regenerates the content from scratch this once, whatever the
+   * model's trigger mode is; the trigger is not changed.
    */
   async refreshMentalModel(
     bankId: string,
     mentalModelId: string,
-    options?: { signal?: AbortSignal }
+    options?: { mode?: "full"; signal?: AbortSignal }
   ): Promise<AsyncOperationSubmitResponse> {
     const response = await sdk.refreshMentalModel({
       client: this.client,
       path: { bank_id: bankId, mental_model_id: mentalModelId },
+      ...(options?.mode ? { body: { mode: options.mode } } : {}),
       signal: options?.signal,
     });
 
