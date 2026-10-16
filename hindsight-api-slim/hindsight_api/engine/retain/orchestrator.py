@@ -613,12 +613,17 @@ def _build_retain_params(contents_dicts, document_tags=None, doc_contents=None):
     if items:
         first_item = items[0]
         for key, value in first_item.items():
-            if key in _RETAIN_PARAMS_NOT_REPLAYED or value is None:
+            if key in _RETAIN_PARAMS_NOT_REPLAYED:
+                continue
+            # `event_date: None` is the caller saying "this has no date" (timestamp
+            # "unset"); a missing key means "date it now". Dropping the None made
+            # every reprocess stamp undated material with the reprocess time (#5473).
+            if value is None and key != "event_date":
                 continue
             # event_date arrives as a datetime from some callers and a string from
             # others; retain_params is JSON, so normalise here rather than at every
             # reader.
-            if key == "event_date":
+            if key == "event_date" and value is not None:
                 value = value.isoformat() if hasattr(value, "isoformat") else str(value)
             retain_params[key] = value
 
@@ -1955,6 +1960,7 @@ async def retain_batch(
             document_prefetch=document_prefetch,
             full_document_body=full_document_body,
             delta_full_body=_delta_full_body,
+            document_body_hash=document_body_hash,
             append_base_hash=append_base_hash,
             attachment_loader=attachment_loader,
             vlm_config=vlm_config,
@@ -3712,6 +3718,7 @@ async def _try_delta_retain(
     # `full_document_body`, which is what gets WRITTEN — the two are the same for a replacement and
     # deliberately not for an append.
     delta_full_body: str | None = None,
+    document_body_hash: str | None = None,
     append_base_hash: str | None = None,
     attachment_loader: "RetainAttachmentLoader | None" = None,
     vlm_config: "LLMConfig | None" = None,
@@ -3878,6 +3885,19 @@ async def _try_delta_retain(
         return None
 
     chunks_to_process = changed_indices + new_indices
+
+    # The stored document already carries THIS body's hash, yet some of its chunks differ: a sliced
+    # retain of this exact body was interrupted part-way and this is its retry (#5485). Delta would
+    # extract every unwritten chunk of the whole document in one step that commits only at the end,
+    # so the retry floods the LLM queue and loses everything if it is interrupted too. The streaming
+    # path resumes the same work slice by slice instead: its recovery probe matches this same hash
+    # and skips the committed chunks.
+    if chunks_to_process and document_body_hash is not None and doc_hash_at_load == document_body_hash:
+        log_buffer.append(
+            f"[delta] Document {effective_doc_id} is a partially written copy of this body — "
+            f"resuming slice by slice instead of extracting {len(chunks_to_process)} chunks at once"
+        )
+        return None
 
     if not chunks_to_process and not removed_indices:
         # Nothing changed — just update document metadata/tags

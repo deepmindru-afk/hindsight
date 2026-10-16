@@ -683,6 +683,7 @@ from .reflect.retractions import (
 )
 from .reflect.structured_doc import StructuredDocument
 from .reflect.tools import (
+    returned_memories,
     tool_expand,
     tool_read_mental_models,
     tool_recall,
@@ -2105,10 +2106,9 @@ def _count_retrieved_facts(tool_trace: list[ToolCallTrace]) -> dict[str, int]:
 
     for tc in tool_trace:
         output = tc.output or {}
-        if tc.tool == "recall":
-            for memory in output.get("memories") or []:
-                _tally(memory.get("fact_type", "world"), memory.get("id"))
-        elif tc.tool == "search_observations":
+        for memory in returned_memories(tc.tool, output):
+            _tally(memory.fact_type, memory.id)
+        if tc.tool == "search_observations":
             for obs in output.get("observations") or []:
                 _tally("observation", obs.get("id"))
         elif tc.tool == "search_mental_models":
@@ -3416,14 +3416,7 @@ class MemoryEngine(MemoryEngineInterface):
                     label_tags_by_strategy[item_strategy] = label_tag_candidates(config.entity_labels)
                 item_tags = sorted({*(item.get("tags") or []), *(document_tags or [])})
                 self._refuse_unwritable(item_tags, write_scope, "memories")
-                # Explicit observation scopes say where consolidation writes this item's
-                # observations, so they are writes too. "shared" writes untagged ones.
-                observation_scopes = item.get("observation_scopes")
-                if observation_scopes == "shared":
-                    self._refuse_unwritable([], write_scope, "observations")
-                elif isinstance(observation_scopes, list):
-                    for scope_tags in observation_scopes:
-                        self._refuse_unwritable(list(scope_tags), write_scope, "observations")
+                self._refuse_unwritable_scopes(item.get("observation_scopes"), write_scope)
                 self._refuse_unwritable_label_tags(label_tags_by_strategy[item_strategy], write_scope, item_strategy)
 
         document_ids = sorted({str(c["document_id"]) for c in contents if c.get("document_id")})
@@ -3452,6 +3445,15 @@ class MemoryEngine(MemoryEngineInterface):
             f"Retain strategy '{strategy or 'default'}' can tag memories {', '.join(outside)}, which you can't write",
             status_code=403,
         )
+
+    def _refuse_unwritable_scopes(self, observation_scopes: Any, write_scope: Any) -> None:
+        """Explicit observation scopes say where consolidation writes observations, so they are
+        writes too, checked like tags. "shared" writes untagged ones."""
+        if observation_scopes == "shared":
+            self._refuse_unwritable([], write_scope, "observations")
+        elif isinstance(observation_scopes, list):
+            for scope_tags in observation_scopes:
+                self._refuse_unwritable(list(scope_tags), write_scope, "observations")
 
     async def _visible_knowledge_node_ids(self, conn: Any, bank_id: str, tag_scope: list[TagGroup]) -> set[str]:
         """Ids of the knowledge-tree nodes a caller confined to ``tag_scope`` may see."""
@@ -9504,6 +9506,7 @@ class MemoryEngine(MemoryEngineInterface):
                     enable_text_search=enable_text_search,
                     enable_graph=enable_graph_retrieval,
                     reranking=reranking,
+                    reranker_provider=getattr(self._cross_encoder_reranker.cross_encoder, "primary_provider_name", ""),
                     reranker_max_candidates=(
                         reranker_max_candidates
                         if reranker_max_candidates is not None
@@ -11001,6 +11004,7 @@ class MemoryEngine(MemoryEngineInterface):
         bank_id: str,
         *,
         tags: list[str] | None = None,
+        observation_scopes: list[list[str]] | str | None = None,
         request_context: "RequestContext",
     ) -> bool:
         """
@@ -11022,12 +11026,21 @@ class MemoryEngine(MemoryEngineInterface):
         changes — a PATCH re-sending the tags the document already has (an
         idempotent normalisation sweep) is a no-op.
 
+        ``observation_scopes`` moves the document's memories to another scoping without
+        re-extracting them (#5309) — e.g. a bank retained under per-session tags to
+        ``shared``. It runs the same cascade, under the same rule: only a memory whose
+        resolved scopes change loses its observations and is requeued. It is also written
+        into the document's retain params, so a later reprocess keeps it.
+
         Args:
             document_id: Document ID to update
             bank_id: Bank ID that owns the document
             tags: New tags to apply to the document and all its memory units (optional).
                 Compared as a set against the document's current tags; equal means no
                 retag and no re-consolidation.
+            observation_scopes: New observation scoping for every memory of the document
+                (optional), with the values retain accepts. Overrides the rename a retag
+                would otherwise carry into an explicit scope list.
             request_context: Request context for authentication.
 
         Returns:
@@ -11042,8 +11055,11 @@ class MemoryEngine(MemoryEngineInterface):
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         await self._require_writable(bank_id, request_context, document_id=document_id, new_tags=tags)
+        if observation_scopes is not None:
+            self._refuse_unwritable_scopes(observation_scopes, await self._write_tag_scope(bank_id, request_context))
         backend = await self._get_backend()
         invalidated_obs = 0
+        requeued_units = 0
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
                 from .memories import get_memories
@@ -11085,7 +11101,10 @@ class MemoryEngine(MemoryEngineInterface):
                     _label_keys = label_tag_keys(getattr(_retag_config, "entity_labels", None))
 
                 def _retagged(existing: list[str] | None) -> list[str]:
-                    merged = list(retag or [])
+                    if retag is None:
+                        # A scope change alone: every unit keeps the tags it has.
+                        return list(existing or [])
+                    merged = list(retag)
                     seen = set(merged)
                     for t in split_label_tags(existing, _label_keys):
                         if t not in seen:
@@ -11094,21 +11113,38 @@ class MemoryEngine(MemoryEngineInterface):
                     return merged
 
                 def _rescoped(scopes: Any) -> str | None:
-                    # The unit's scopes after the rename, as JSON — or None when they do not change.
-                    renamed = _renamed_scopes(scopes, current_tags, retag or [])
-                    return json.dumps(renamed) if renamed != _normalize_scopes(scopes) else None
+                    # The unit's scopes after the PATCH, as JSON — or None when they do not change.
+                    # Requested scopes win; otherwise a retag carries a rename into explicit ones.
+                    if observation_scopes is not None:
+                        new_scopes: Any = observation_scopes
+                    else:
+                        new_scopes = _renamed_scopes(scopes, current_tags, retag or [])
+                    return json.dumps(new_scopes) if new_scopes != _normalize_scopes(scopes) else None
 
-                if not await _store.update_document_tags(
-                    conn=conn,
-                    fq_table=fq_table,
-                    bank_id=bank_id,
-                    document_id=document_id,
-                    tags=tags,
-                    found=_current.found,
-                ):
+                try:
+                    found = await _store.update_document_tags(
+                        conn=conn,
+                        fq_table=fq_table,
+                        bank_id=bank_id,
+                        document_id=document_id,
+                        tags=tags,
+                        found=_current.found,
+                        observation_scopes=observation_scopes,
+                    )
+                except NotImplementedError:
+                    if observation_scopes is None:
+                        raise
+                    from hindsight_api.extensions import OperationValidationError
+
+                    raise OperationValidationError(
+                        "This bank's memory store does not support changing observation_scopes", status_code=400
+                    )
+                if not found:
                     return False
-                if retag is not None:
-                    invalidated_obs = await _store.retag_document_memories(
+                # Whether any unit's scopes actually move is decided per unit inside, against the
+                # resolved scopes (write_scopes_changed) — a no-op change requeues nothing.
+                if retag is not None or observation_scopes is not None:
+                    retagged_result = await _store.retag_document_memories(
                         conn=conn,
                         ops=self._backend.ops,
                         fq_table=fq_table,
@@ -11118,6 +11154,8 @@ class MemoryEngine(MemoryEngineInterface):
                         retagged=_retagged,
                         rescoped=_rescoped,
                     )
+                    invalidated_obs = retagged_result.invalidated_observations
+                    requeued_units = retagged_result.requeued_units
 
         if invalidated_obs > 0:
             # Observation units were deleted, changing the counts get_bank_stats
@@ -11128,6 +11166,7 @@ class MemoryEngine(MemoryEngineInterface):
                 await self._bank_stats_cache.invalidate(get_current_schema(), bank_id)
             except Exception as e:
                 logger.warning(f"Failed to invalidate bank stats cache after document update for bank {bank_id}: {e}")
+        if invalidated_obs > 0 or requeued_units > 0:
             config = await self._config_resolver.resolve_full_config(bank_id, request_context)
             if config.enable_auto_consolidation:
                 try:
@@ -15786,26 +15825,15 @@ class MemoryEngine(MemoryEngineInterface):
             }
             seen_memory_ids: set[str] = set()
             for tc in agent_result.tool_trace:
-                if tc.tool == "recall" and "memories" in tc.output:
-                    for memory_data in tc.output["memories"]:
-                        memory_id = memory_data.get("id")
+                if tc.tool in ("recall", "expand"):
+                    for memory in returned_memories(tc.tool, tc.output):
                         # Only include memories that the agent declared as used (or all if none specified)
-                        if memory_id and memory_id not in seen_memory_ids:
-                            if used_memory_ids_set and memory_id not in used_memory_ids_set:
+                        if memory.id not in seen_memory_ids:
+                            if used_memory_ids_set and memory.id not in used_memory_ids_set:
                                 continue  # Skip memories not actually used by the agent
-                            seen_memory_ids.add(memory_id)
-                            fact_type = memory_data.get("fact_type", "world")
-                            if fact_type in based_on:
-                                based_on[fact_type].append(
-                                    MemoryFact(
-                                        id=memory_id,
-                                        text=memory_data.get("text", ""),
-                                        fact_type=fact_type,
-                                        context=memory_data.get("context"),
-                                        occurred_start=memory_data.get("occurred_start"),
-                                        occurred_end=memory_data.get("occurred_end"),
-                                    )
-                                )
+                            seen_memory_ids.add(memory.id)
+                            if memory.fact_type in based_on:
+                                based_on[memory.fact_type].append(memory)
                 elif tc.tool == "search_observations" and "observations" in tc.output:
                     for obs_data in tc.output["observations"]:
                         obs_id = obs_data.get("id")
@@ -15917,6 +15945,8 @@ class MemoryEngine(MemoryEngineInterface):
                 input_tokens=agent_result.usage.input_tokens,
                 output_tokens=agent_result.usage.output_tokens,
                 total_tokens=agent_result.usage.total_tokens,
+                cached_tokens=agent_result.usage.cached_tokens,
+                thoughts_tokens=agent_result.usage.thoughts_tokens,
             )
 
             # Return response (compatible with existing API)
