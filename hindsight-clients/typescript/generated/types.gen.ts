@@ -589,6 +589,18 @@ export type BankTemplateConfig = {
    */
   enable_reranking?: boolean | null;
   /**
+   * Reflect Use Decision Model
+   *
+   * When the server has a decision model, reflect lets it prune evidence and decide when to stop
+   */
+  reflect_use_decision_model?: boolean | null;
+  /**
+   * Mental Model Refresh Use Decision Model
+   *
+   * The same, for knowledge-page refreshes
+   */
+  mental_model_refresh_use_decision_model?: boolean | null;
+  /**
    * Disposition Skepticism
    *
    * Skepticism trait (1-5)
@@ -1473,7 +1485,7 @@ export type CreateBankAliasRequest = {
   /**
    * Alias
    *
-   * The extra bank id. Same rules as a bank id (non-empty, at most 192 bytes of UTF-8, no control characters), and it must not already name a bank or another alias.
+   * The extra bank id. Same rules as a bank id (non-empty, at most 192 bytes of UTF-8, no control characters, no leading underscore), and it must not already name a bank or another alias.
    */
   alias: string;
   /**

@@ -605,7 +605,7 @@ def validate_sql_schema(sql: str) -> None:
                         )
 
 
-from .cross_encoder import RANK_SCORE_PROVIDERS, CrossEncoderModel
+from .cross_encoder import RANK_SCORE_PROVIDERS, CrossEncoderModel, TypeSafeCrossEncoder
 from .embeddings import Embeddings, create_embeddings_from_env
 from .interface import BankConfigState, BankTemplateImportWrite, MemoryEngineInterface
 from .search.decision_reranker import PROVIDER_NAME as DECISION_MODEL_RERANKER
@@ -3015,6 +3015,8 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Initialize cross-encoder reranker (cached for performance)
         self._cross_encoder_reranker = CrossEncoderReranker(cross_encoder=cross_encoder)
+        self._reflect_decision_model_client: TypeSafeCrossEncoder | None = None
+        self._reflect_decision_model_unsupported_logged = False
 
         # Initialize task backend.
         # All backends use BrokerTaskBackend + WorkerPoller for async background execution.
@@ -7842,6 +7844,8 @@ class MemoryEngine(MemoryEngineInterface):
                 f"Target bank '{target}' already exists; a bank restore writes into a fresh bank "
                 f"(it is not a merge). Delete it first, or choose a different target bank id."
             )
+        # The restore checks this again, but the caller should get the 400 now, not a failed operation.
+        bank_utils.validate_new_bank_id(target)
         if self._operation_validator:
             from hindsight_api.extensions import CreateBankContext
 
@@ -8620,14 +8624,18 @@ class MemoryEngine(MemoryEngineInterface):
                     uuid.UUID(operation_id),
                 )
 
-        if self._operation_validator and await bank_utils.get_bank_profile_if_exists(backend, bank_id) is None:
-            from hindsight_api.extensions import CreateBankContext
+        if await bank_utils.get_bank_profile_if_exists(backend, bank_id) is None:
+            # Checked here rather than only at submit time: the admin CLI restores through
+            # this method directly, and the id may come from the archive's manifest.
+            bank_utils.validate_new_bank_id(bank_id)
+            if self._operation_validator:
+                from hindsight_api.extensions import CreateBankContext
 
-            ctx = CreateBankContext(
-                bank_id=bank_id,
-                request_context=request_context,
-            )
-            await self._validate_operation(self._operation_validator.validate_create_bank(ctx))
+                ctx = CreateBankContext(
+                    bank_id=bank_id,
+                    request_context=request_context,
+                )
+                await self._validate_operation(self._operation_validator.validate_create_bank(ctx))
 
         async def _resolve_restored_config() -> HindsightConfig:
             # import_bank calls this once it has restored the archive's bank row.
@@ -15333,6 +15341,52 @@ class MemoryEngine(MemoryEngineInterface):
             return self._reflect_llm_config
         return override
 
+    def _reflect_decision_model(self) -> TypeSafeCrossEncoder | None:
+        """The decision model reflect asks "is this enough?", or None when none is set up.
+
+        Built from the reflect decision-model setup (HINDSIGHT_API_DECISION_MODEL_*, with
+        HINDSIGHT_API_REFLECT_DECISION_MODEL_* overrides), once per engine so its connection
+        pool is shared across reflects. It is a TypeSafeCrossEncoder because pruning needs
+        that class's rank-and-cut; the sufficiency question is one more call on it.
+
+        That client speaks only TypeSafe's System One endpoint, so another provider (cloudflare,
+        openai) leaves reflect on agent turns instead of failing every reflect's first round.
+        """
+        if self._reflect_decision_model_client is None:
+            setup = get_config().decision_model_config("reflect")
+            if setup is None:
+                return None
+            if setup.provider != "typesafe":
+                if not self._reflect_decision_model_unsupported_logged:
+                    self._reflect_decision_model_unsupported_logged = True
+                    logger.warning(
+                        "Reflect's decision model supports only the typesafe provider, not %r: "
+                        "reflect keeps agent turns.",
+                        setup.provider,
+                    )
+                return None
+            self._reflect_decision_model_client = TypeSafeCrossEncoder(
+                api_key=setup.api_key,
+                model=setup.model,
+                base_url=setup.base_url,
+                timeout=setup.timeout,
+                max_concurrent=setup.max_concurrent,
+                prune_candidates=True,
+                # The recall cut keeps at most 12; a reflect answer can need more (a count
+                # over seven customers is seven facts plus the observations about them).
+                # The floor guards the cut's coarse levels: on that count it kept five.
+                shortlist=25,
+                min_keep=15,
+            )
+        return self._reflect_decision_model_client
+
+    async def _prune_reflect_evidence(self, query: str, texts: list[str]) -> list[bool]:
+        """Keep flags for the first retrieval of a decision-orchestrated reflect."""
+        model = self._reflect_decision_model()
+        assert model is not None  # only wired when a decision model is configured
+        scores = await model.predict([(query, text) for text in texts])
+        return [score > 0.0 for score in scores]
+
     def _llm_for_reflect_operation(self, operation_label: str) -> "LLMConfig | MultiLLMProvider":
         """Pick the LLM for a reflect-pipeline run: interactive, or background refresh.
 
@@ -15414,6 +15468,13 @@ class MemoryEngine(MemoryEngineInterface):
                 - structured_output: Parsed structured output when response_schema was
                   provided, else None
         """
+        # Wall-clock marks for the timeline log line at the end: where one reflect's time
+        # went, setup to post-processing, so a slow reflect points at its step.
+        _timeline: list[tuple[str, float]] = [("entry", time.monotonic())]
+
+        def _mark(step: str) -> None:
+            _timeline.append((step, time.monotonic()))
+
         # Sanitize at ingress so lone UTF-16 surrogates in the question/context cannot
         # crash logging, recall's embedder, or the reflect LLM call (see issue #1875).
         query = sanitize_text(query) or ""
@@ -15479,13 +15540,16 @@ class MemoryEngine(MemoryEngineInterface):
         logger.info(f"[REFLECT {reflect_id}] Starting agentic reflect for query: {query[:50]}...{tags_info}")
 
         # Get bank profile for agent identity
+        _mark("validate")
         profile = await self.ensure_bank_profile(bank_id, request_context=request_context)
+        _mark("profile")
 
         # NOTE: Mental models are NOT pre-loaded to keep the initial prompt small.
         # The agent can call lookup() to list available models if needed.
         # This is critical for banks with many mental models to avoid huge prompts.
 
         resolved_reflect_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+        _mark("config")
 
         # Compute max iterations based on budget
         config = get_config()
@@ -15496,6 +15560,15 @@ class MemoryEngine(MemoryEngineInterface):
         max_iterations = max(1, int(base_max_iterations * budget_multipliers.get(effective_budget, 1.0)))
         max_context_tokens = config.reflect_max_context_tokens
         wall_timeout = config.reflect_wall_timeout
+        # Decision-orchestrated when a decision model is set up for reflect and the bank keeps
+        # it on: for an interactive reflect and a knowledge-page refresh, each its own switch.
+        is_refresh = _operation_label.endswith("refresh_mental_model")
+        use_decision_model = (
+            resolved_reflect_config.mental_model_refresh_use_decision_model
+            if is_refresh
+            else resolved_reflect_config.reflect_use_decision_model
+        )
+        decision_model = self._reflect_decision_model() if use_decision_model else None
 
         # Run agentic loop - acquire connections only when needed for DB operations
         # (not held during LLM calls which can be slow)
@@ -15507,6 +15580,7 @@ class MemoryEngine(MemoryEngineInterface):
         # Internal read: reflect is already authorized (validate_reflect + the caller's
         # scope); the public get_bank_freshness is a bank-wide read scoped callers can't make.
         freshness = await self._bank_freshness(bank_id)
+        _mark("freshness")
         last_consolidated_at = freshness.get("last_consolidated_at")
         pending_consolidation = freshness.get("pending_consolidation", 0)
         # Resolved once for the whole reflect: a mental model refreshed at or
@@ -15711,6 +15785,7 @@ class MemoryEngine(MemoryEngineInterface):
             has_mental_models = mental_model_count > 0
             if has_mental_models:
                 logger.info(f"[REFLECT {reflect_id}] Bank has {mental_model_count} mental models")
+        _mark("directives_and_pages")
 
         # Run the agent with parent span for reflect operation (skip if called from another operation)
         if not _skip_span:
@@ -15749,6 +15824,8 @@ class MemoryEngine(MemoryEngineInterface):
                         store_document_text=config_dict.get("store_document_text", DEFAULT_STORE_DOCUMENT_TEXT),
                         answer_as_document=answer_as_document,
                         tool_token_limits=tool_token_limits,
+                        evidence_is_sufficient_fn=decision_model.evidence_is_sufficient if decision_model else None,
+                        prune_evidence_fn=self._prune_reflect_evidence if decision_model else None,
                         reflect_id=reflect_id,
                     ),
                     timeout=wall_timeout,
@@ -15777,15 +15854,7 @@ class MemoryEngine(MemoryEngineInterface):
                     f"Consider reducing the budget or simplifying the query."
                 )
 
-            total_time = time.perf_counter() - reflect_start
-            logger.info(
-                "[REFLECT %s] Complete: %d chars, %d iterations, %d tool calls | %.3fs",
-                reflect_id,
-                len(agent_result.text),
-                agent_result.iterations,
-                agent_result.tools_called,
-                total_time,
-            )
+            _mark("agent")
 
             # Convert agent tool trace to ToolCallTrace objects
             tool_trace_result = [
@@ -15981,6 +16050,21 @@ class MemoryEngine(MemoryEngineInterface):
                 except Exception as e:
                     logger.warning(f"Post-reflect hook error (non-fatal): {e}")
 
+            _mark("post")
+            # The one closing line per reflect: the agent's outcome plus where the wall clock
+            # went, setup to post-processing, so a slow reflect points at its step.
+            logger.info(
+                "[REFLECT %s] Complete: %d chars, %d iterations, %d tool calls%s | %s | total=%dms",
+                reflect_id,
+                len(agent_result.text),
+                agent_result.iterations,
+                agent_result.tools_called,
+                f", decision model {decision_model.model}" if decision_model else "",
+                " ".join(
+                    f"{step}={int((at - before) * 1000)}ms" for (_, before), (step, at) in zip(_timeline, _timeline[1:])
+                ),
+                int((_timeline[-1][1] - _timeline[0][1]) * 1000),
+            )
             return result
         finally:
             if span_context:
@@ -17973,7 +18057,7 @@ class MemoryEngine(MemoryEngineInterface):
                             user_prompt=unsay_prompt,
                             scope="mental_model_retraction_ops",
                             max_completion_tokens=get_config().reflect_max_completion_tokens,
-                            temperature=get_config().llm_temperature_consolidation,
+                            temperature=get_config().llm_temperature_mental_model_refresh,
                         )
                         unsay_outcome = apply_operations(current_doc, unsay_ops.operations)
                         retraction_operations = MentalModelDeltaOperations(
@@ -18108,7 +18192,7 @@ class MemoryEngine(MemoryEngineInterface):
                         strict_schema=get_config().llm_strict_schema_reflect,
                         skip_validation=True,  # Get raw JSON; the parser validates op-by-op
                         max_completion_tokens=get_config().reflect_max_completion_tokens,
-                        temperature=get_config().llm_temperature_consolidation,
+                        temperature=get_config().llm_temperature_mental_model_refresh,
                     )
                     apply_outcome = apply_operations(current_doc, op_list.operations)
                     delta_operations = MentalModelDeltaOperations(

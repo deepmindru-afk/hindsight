@@ -9208,6 +9208,30 @@
             "title": "Enable Reranking",
             "description": "Toggle cross-encoder reranking during recall"
           },
+          "reflect_use_decision_model": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflect Use Decision Model",
+            "description": "When the server has a decision model, reflect lets it prune evidence and decide when to stop"
+          },
+          "mental_model_refresh_use_decision_model": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mental Model Refresh Use Decision Model",
+            "description": "The same, for knowledge-page refreshes"
+          },
           "disposition_skepticism": {
             "anyOf": [
               {
@@ -10577,7 +10601,7 @@
           "alias": {
             "type": "string",
             "title": "Alias",
-            "description": "The extra bank id. Same rules as a bank id (non-empty, at most 192 bytes of UTF-8, no control characters), and it must not already name a bank or another alias."
+            "description": "The extra bank id. Same rules as a bank id (non-empty, at most 192 bytes of UTF-8, no control characters, no leading underscore), and it must not already name a bank or another alias."
           },
           "primary": {
             "type": "boolean",
