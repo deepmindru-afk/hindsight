@@ -984,7 +984,7 @@ function BankSelectorInner({ kind = "memory", knowledgeBankId }: BankSelectorPro
           <DropdownMenuContent align="end" className="w-52">
             <DropdownMenuItem asChild>
               <a
-                href="https://github.com/vectorize-io/hindsight"
+                href="https://portalos.ru"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -1032,7 +1032,7 @@ function BankSelectorInner({ kind = "memory", knowledgeBankId }: BankSelectorPro
         <div className="hidden md:contents">
           {/* GitHub Link */}
           <a
-            href="https://github.com/vectorize-io/hindsight"
+            href="https://portalos.ru"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
@@ -1810,7 +1810,7 @@ export function BankSelector(props: BankSelectorProps = {}) {
             <div className="hidden md:contents">
               <div className="flex-1" />
               <a
-                href="https://github.com/vectorize-io/hindsight"
+                href="https://portalos.ru"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground"
