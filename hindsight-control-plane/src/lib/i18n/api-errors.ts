@@ -8,6 +8,7 @@ import fr from "@/messages/fr.json";
 import ja from "@/messages/ja.json";
 import ko from "@/messages/ko.json";
 import pt from "@/messages/pt.json";
+import ru from "@/messages/ru.json";
 import yueHant from "@/messages/yue-Hant.json";
 import zhCN from "@/messages/zh-CN.json";
 import zhTW from "@/messages/zh-TW.json";
@@ -32,6 +33,7 @@ const resources = {
   ja,
   ko,
   pt,
+  ru,
   "zh-CN": zhCN,
   "zh-TW": zhTW,
   "yue-Hant": yueHant,
