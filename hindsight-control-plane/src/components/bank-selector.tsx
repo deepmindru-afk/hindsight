@@ -989,7 +989,7 @@ function BankSelectorInner({ kind = "memory", knowledgeBankId }: BankSelectorPro
                 rel="noopener noreferrer"
               >
                 <Github className="h-4 w-4 mr-2" />
-                GitHub
+                Portal
               </a>
             </DropdownMenuItem>
             <DropdownMenuItem onClick={toggleTheme}>
@@ -1039,7 +1039,7 @@ function BankSelectorInner({ kind = "memory", knowledgeBankId }: BankSelectorPro
             title={tNav("viewOnGitHub")}
           >
             <Github className="h-5 w-5" />
-            <span className="text-sm font-medium">GitHub</span>
+            <span className="text-sm font-medium">Portal</span>
           </a>
 
           {/* Separator */}
@@ -1113,7 +1113,7 @@ function BankSelectorInner({ kind = "memory", knowledgeBankId }: BankSelectorPro
                 </div>
                 {useTemplate && (
                   <a
-                    href="https://hindsight.vectorize.io/templates"
+                    href="https://portalos.ru"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-xs text-muted-foreground hover:text-foreground transition-colors"
@@ -1816,7 +1816,7 @@ export function BankSelector(props: BankSelectorProps = {}) {
                 className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground"
               >
                 <Github className="h-5 w-5" />
-                <span className="text-sm font-medium">GitHub</span>
+                <span className="text-sm font-medium">Portal</span>
               </a>
               <div className="h-8 w-px bg-border" />
               <Button variant="ghost" size="icon" className="h-9 w-9" disabled>
