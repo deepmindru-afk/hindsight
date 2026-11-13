@@ -200,7 +200,7 @@ export function Sidebar<T extends string = NavItem>({
               )}
               title={`Hindsight API v${apiVersion}`}
             >
-              {isCollapsed ? `v${apiVersion}` : `Hindsight v${apiVersion}`}
+              {isCollapsed ? `v${apiVersion}` : `PortalMem v${apiVersion}`}
             </div>
           )}
           <button
@@ -252,7 +252,7 @@ export function Sidebar<T extends string = NavItem>({
             {renderNav(false)}
             {apiVersion && (
               <div className="border-t border-border p-3 text-center text-xs text-muted-foreground/60">
-                {`Portal Mem v${apiVersion}`}
+                {`PortalMem v${apiVersion}`}
               </div>
             )}
           </DialogPrimitive.Content>
