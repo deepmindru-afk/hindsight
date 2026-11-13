@@ -28,14 +28,14 @@
      defaults so every bg-card / text-foreground / border-border utility across
      the whole site picks up the design system without per-component edits. */
   --background: #F3F5F9;
-  --foreground: #0D1117;
+  --foreground: #140d17;
   --card: #FFFFFF;
   --card-foreground: #0D1117;
   --popover: #FFFFFF;
   --popover-foreground: #0D1117;
-  --primary: #0074D9;
+  --primary: #1d0f1f;
   --primary-foreground: #FFFFFF;
-  --primary-gradient: linear-gradient(135deg, #0074d9 0%, #009296 100%);
+  --primary-gradient: linear-gradient(135deg, #aa00d9 0%, #009296 100%);
   --secondary: #EDF0F6;
   --secondary-foreground: #0D1117;
   --muted: #EDF0F6;
@@ -95,7 +95,7 @@
   --sidebar-accent: #EDF0F6;
   --sidebar-accent-foreground: #0D1117;
   --sidebar-border: rgba(0, 0, 0, 0.05);
-  --sidebar-ring: #0074D9;
+  --sidebar-ring: #7400d9;
   /* --font-sans and --font-mono are set on <html> by next/font/local in
      [locale]/layout.tsx. :root inherits them; we intentionally do NOT
      redeclare them here so the next/font value is what utilities resolve to.
@@ -167,9 +167,9 @@
   --card-foreground: #DCE8FF;
   --popover: #0F1724;
   --popover-foreground: #DCE8FF;
-  --primary: #5BB0FF;
+  --primary: #2e0f2e;
   --primary-foreground: #080C17;
-  --primary-gradient: linear-gradient(135deg, #0074d9 0%, #009296 100%);
+  --primary-gradient: linear-gradient(135deg, #380d35 0%, #009296 100%);
   --secondary: #172036;
   --secondary-foreground: #DCE8FF;
   --muted: #172036;
@@ -197,8 +197,8 @@
   --chip-fg: #94a8bc;
   --chip-accent: #4dd8e6; /* logo cyan */
   --sidebar: #0A1020;
-  --sidebar-foreground: #6E8AAF;
-  --sidebar-primary: #5BB0FF;
+  --sidebar-foreground: #844c9d;
+  --sidebar-primary: #5b1e66;
   --sidebar-primary-foreground: #080C17;
   --sidebar-accent: #172036;
   --sidebar-accent-foreground: #DCE8FF;
