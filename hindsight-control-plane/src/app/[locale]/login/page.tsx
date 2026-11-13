@@ -63,7 +63,7 @@ function LoginForm() {
         <CardHeader className="text-center">
           <Image
             src={withBasePath("/logo.png")}
-            alt="Hindsight"
+            alt="Portal"
             width={160}
             height={160}
             className="mx-auto"

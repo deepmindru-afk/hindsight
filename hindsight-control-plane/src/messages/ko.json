@@ -622,7 +622,7 @@
     "memoryDefenseSecretLeakTitle": "시크릿 유출 방지",
     "memoryDefenseSecretLeakDescription": "보존된 콘텐츠에서 시크릿을 검사합니다. 일반적인 공급자 키, AWS, 개인 정보를 포함하는 45개 패턴.",
     "memoryDefenseEnterpriseTitle": "Memory Defense Enterprise",
-    "memoryDefenseEnterpriseSubtitle": "더 많이 감지하고, 더 똑똑하게 편집하며, 모든 것을 감사하세요 — Hindsight Cloud에서 사용 가능.",
+    "memoryDefenseEnterpriseSubtitle": "더 많이 감지하고, 더 똑똑하게 편집하며, 모든 것을 감사하세요 — Portal Cloud에서 사용 가능.",
     "memoryDefenseEnterpriseFeatureDetectSecrets": "고급 시크릿 감지: 공급자 키, AWS, GitHub, CI 토큰을 포함하는 200개 이상의 패턴",
     "memoryDefenseEnterpriseFeatureBase64": "Base64 디코딩: 인코딩된 페이로드 안에 숨겨진 시크릿 감지",
     "memoryDefenseEnterpriseFeatureLlm": "LLM 스크리닝: 정규식으로 잡을 수 없는 새로운 유출 패턴 감지",
@@ -1927,8 +1927,8 @@
     "resumeMotionLabel": "재생"
   },
   "metadata": {
-    "title": "Hindsight Cloud",
-    "description": "Hindsight 시맨틱 메모리를 위한 멀티테넌트 컨트롤 플레인"
+    "title": "Portal Cloud",
+    "description": "Portal 시맨틱 메모리를 위한 멀티테넌트 컨트롤 플레인"
   },
   "addDocument": {
     "addDocumentButton": "문서 추가",
@@ -2019,7 +2019,7 @@
   "banksOverview": {
     "title": "메모리 뱅크",
     "subtitle": "각 메모리 뱅크는 별개의 뇌입니다. 한 사용자, 에이전트 또는 프로젝트가 기억하는 모든 것을 격리해 저장하며, 뱅크 간에는 아무것도 공유되지 않습니다.",
-    "welcomeTitle": "Hindsight에 오신 것을 환영합니다",
+    "welcomeTitle": "Portal에 오신 것을 환영합니다",
     "welcomeBody": "메모리 뱅크는 별개의 뇌입니다. 한 사용자, 에이전트 또는 프로젝트가 기억하는 모든 것을 격리해 저장합니다. 첫 번째 뱅크를 만들어 시작해 보세요.",
     "search": "뱅크 검색...",
     "noSearchResults": "검색과 일치하는 뱅크가 없습니다.",
@@ -2047,7 +2047,7 @@
     "bulkDeleteFailures": "다음 뱅크는 삭제하지 못했습니다:"
   },
   "login": {
-    "title": "Hindsight 제어 플레인",
+    "title": "Portal 제어 플레인",
     "description": "계속하려면 액세스 키를 입력하세요",
     "accessKey": "액세스 키",
     "accessKeyPlaceholder": "액세스 키 입력",
@@ -2426,7 +2426,7 @@
       "emptyTitle": "아직 지식 뱅크가 없습니다",
       "emptyBody": "하나를 만든 뒤 PDF, 이미지, 오디오, 동영상, 텍스트를 업로드하세요.",
       "loadFailed": "지식 뱅크를 불러오지 못했습니다",
-      "loadFailedBody": "Hindsight API가 응답하지 않았습니다. 실행 중인지 확인한 뒤 다시 시도하세요.",
+      "loadFailedBody": "Portal API가 응답하지 않았습니다. 실행 중인지 확인한 뒤 다시 시도하세요.",
       "retry": "다시 시도"
     },
     "create": {

@@ -622,7 +622,7 @@
     "memoryDefenseSecretLeakTitle": "Geheimnislecks verhindern",
     "memoryDefenseSecretLeakDescription": "Gespeicherte Inhalte auf Geheimnisse prüfen. 45 Muster für gängige Anbieter-Schlüssel, AWS und persönliche Daten.",
     "memoryDefenseEnterpriseTitle": "Memory Defense Enterprise",
-    "memoryDefenseEnterpriseSubtitle": "Mehr erkennen, intelligenter redigieren, alles auditieren — verfügbar in Hindsight Cloud.",
+    "memoryDefenseEnterpriseSubtitle": "Mehr erkennen, intelligenter redigieren, alles auditieren — verfügbar in Portal Cloud.",
     "memoryDefenseEnterpriseFeatureDetectSecrets": "Erweiterte Geheimnis-Erkennung: 200+ Muster für Anbieter-Schlüssel, AWS, GitHub und CI-Token",
     "memoryDefenseEnterpriseFeatureBase64": "Base64-Decodierung: erkennt Geheimnisse in codierten Nutzlasten",
     "memoryDefenseEnterpriseFeatureLlm": "LLM-Screening: erkennt neuartige Exfiltrationsmuster, die Regex nicht erfasst",
@@ -1927,8 +1927,8 @@
     "resumeMotionLabel": "Start"
   },
   "metadata": {
-    "title": "Hindsight Cloud",
-    "description": "Mehrmandanten-Steuerungsebene für Hindsight semantischen Speicher"
+    "title": "Portal Cloud",
+    "description": "Mehrmandanten-Steuerungsebene für Portal semantischen Speicher"
   },
   "addDocument": {
     "addDocumentButton": "Dokument hinzufügen",
@@ -2019,7 +2019,7 @@
   "banksOverview": {
     "title": "Speicherbänke",
     "subtitle": "Jede Speicherbank ist ein eigenes Gehirn — ein isolierter Speicher für alles, woran sich ein Benutzer, Agent oder Projekt erinnert. Zwischen Bänken wird nichts geteilt.",
-    "welcomeTitle": "Willkommen bei Hindsight",
+    "welcomeTitle": "Willkommen bei Portal",
     "welcomeBody": "Eine Speicherbank ist ein eigenes Gehirn — ein isolierter Speicher für alles, woran sich ein Benutzer, Agent oder Projekt erinnert. Erstellen Sie Ihre erste, um loszulegen.",
     "search": "Bänke suchen...",
     "noSearchResults": "Keine Bänke entsprechen Ihrer Suche.",
@@ -2047,7 +2047,7 @@
     "bulkDeleteFailures": "Diese Bänke konnten nicht gelöscht werden:"
   },
   "login": {
-    "title": "Hindsight Control Plane",
+    "title": "Portal Control Plane",
     "description": "Geben Sie Ihren Zugangsschlüssel ein, um fortzufahren",
     "accessKey": "Zugangsschlüssel",
     "accessKeyPlaceholder": "Zugangsschlüssel eingeben",
@@ -2426,7 +2426,7 @@
       "emptyTitle": "Noch keine Wissensbänke",
       "emptyBody": "Erstelle eine und lade dann PDFs, Bilder, Audio, Video oder Text hoch.",
       "loadFailed": "Wissensbänke konnten nicht geladen werden",
-      "loadFailedBody": "Die Hindsight-API hat nicht geantwortet. Prüfe, ob sie läuft, und versuche es erneut.",
+      "loadFailedBody": "Die Portal-API hat nicht geantwortet. Prüfe, ob sie läuft, und versuche es erneut.",
       "retry": "Erneut versuchen"
     },
     "create": {

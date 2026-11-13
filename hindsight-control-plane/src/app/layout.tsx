@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Hindsight Control Plane",
+  title: "Portal Control Plane",
   description: "Control plane for the temporal semantic memory system",
   icons: {
     icon: "/favicon.png",
@@ -11,7 +11,7 @@ export const metadata: Metadata = {
     apple: "/apple-touch-icon.png",
   },
   manifest: "/manifest.json",
-  appleWebApp: { title: "Hindsight" },
+  appleWebApp: { title: "Portal" },
 };
 
 export default function RootLayout({

@@ -622,7 +622,7 @@
     "memoryDefenseSecretLeakTitle": "Prevención de fugas de secretos",
     "memoryDefenseSecretLeakDescription": "Analiza el contenido retenido en busca de secretos. 45 patrones que cubren claves comunes de proveedores, AWS e información personal.",
     "memoryDefenseEnterpriseTitle": "Memory Defense Enterprise",
-    "memoryDefenseEnterpriseSubtitle": "Detecta más, redacta más inteligentemente y audita todo: disponible en Hindsight Cloud.",
+    "memoryDefenseEnterpriseSubtitle": "Detecta más, redacta más inteligentemente y audita todo: disponible en Portal Cloud.",
     "memoryDefenseEnterpriseFeatureDetectSecrets": "Detección avanzada de secretos: más de 200 patrones que cubren claves de proveedores, AWS, GitHub y tokens de CI",
     "memoryDefenseEnterpriseFeatureBase64": "Decodificación Base64: detecta secretos ocultos en cargas útiles codificadas",
     "memoryDefenseEnterpriseFeatureLlm": "Análisis con LLM: detecta patrones de exfiltración novedosos que las regex no pueden",
@@ -1927,8 +1927,8 @@
     "resumeMotionLabel": "Reanudar"
   },
   "metadata": {
-    "title": "Hindsight Cloud",
-    "description": "Plano de control multi-inquilino para la memoria semántica de Hindsight"
+    "title": "Portal Cloud",
+    "description": "Plano de control multi-inquilino para la memoria semántica de Portal"
   },
   "addDocument": {
     "addDocumentButton": "Agregar documento",
@@ -2019,7 +2019,7 @@
   "banksOverview": {
     "title": "Bancos de memoria",
     "subtitle": "Cada banco de memoria es un cerebro aparte: un almacén aislado de todo lo que recuerda un usuario, agente o proyecto. Nada se comparte entre bancos.",
-    "welcomeTitle": "Bienvenido a Hindsight",
+    "welcomeTitle": "Bienvenido a Portal",
     "welcomeBody": "Un banco de memoria es un cerebro aparte: un almacén aislado de todo lo que recuerda un usuario, agente o proyecto. Cree el primero para empezar.",
     "search": "Buscar bancos...",
     "noSearchResults": "Ningún banco coincide con su búsqueda.",
@@ -2047,7 +2047,7 @@
     "bulkDeleteFailures": "No se pudieron eliminar estos bancos:"
   },
   "login": {
-    "title": "Plano de Control de Hindsight",
+    "title": "Plano de Control de Portal",
     "description": "Introduce tu clave de acceso para continuar",
     "accessKey": "Clave de acceso",
     "accessKeyPlaceholder": "Introduce la clave de acceso",
@@ -2426,7 +2426,7 @@
       "emptyTitle": "Aún no hay bancos de conocimiento",
       "emptyBody": "Crea uno y sube PDF, imágenes, audio, vídeo o texto.",
       "loadFailed": "No se pudieron cargar los bancos de conocimiento",
-      "loadFailedBody": "La API de Hindsight no respondió. Comprueba que esté en marcha e inténtalo de nuevo.",
+      "loadFailedBody": "La API de Portal no respondió. Comprueba que esté en marcha e inténtalo de nuevo.",
       "retry": "Reintentar"
     },
     "create": {

@@ -622,7 +622,7 @@
     "memoryDefenseSecretLeakTitle": "Secret leak prevention",
     "memoryDefenseSecretLeakDescription": "Scan retained content for secrets. 45 patterns covering common provider keys, AWS, and PII.",
     "memoryDefenseEnterpriseTitle": "Memory Defense Enterprise",
-    "memoryDefenseEnterpriseSubtitle": "Detect more, redact smarter, and audit everything — available in Hindsight Cloud.",
+    "memoryDefenseEnterpriseSubtitle": "Detect more, redact smarter, and audit everything — available in Portal Cloud.",
     "memoryDefenseEnterpriseFeatureDetectSecrets": "Advanced secret detection: 200+ patterns covering provider keys, AWS, GitHub, and CI tokens",
     "memoryDefenseEnterpriseFeatureBase64": "Base64 decoding: catch secrets hidden inside encoded payloads",
     "memoryDefenseEnterpriseFeatureLlm": "LLM screening: catch novel exfiltration patterns regex can't",
@@ -1927,8 +1927,8 @@
     "resumeMotionLabel": "Play"
   },
   "metadata": {
-    "title": "Hindsight Cloud",
-    "description": "Multi-tenant control plane for Hindsight semantic memory"
+    "title": "Portal Cloud",
+    "description": "Multi-tenant control plane for Portal semantic memory"
   },
   "addDocument": {
     "addDocumentButton": "Add Document",
@@ -2019,7 +2019,7 @@
   "banksOverview": {
     "title": "Memory banks",
     "subtitle": "Each memory bank is a separate brain — an isolated store of everything one user, agent or project remembers. Nothing is shared between banks.",
-    "welcomeTitle": "Welcome to Hindsight",
+    "welcomeTitle": "Welcome to Portal",
     "welcomeBody": "A memory bank is a separate brain — an isolated store of everything one user, agent or project remembers. Create your first one to get started.",
     "search": "Search banks...",
     "noSearchResults": "No banks match your search.",
@@ -2047,7 +2047,7 @@
     "bulkDeleteFailures": "These banks could not be deleted:"
   },
   "login": {
-    "title": "Hindsight Control Plane",
+    "title": "Portal Control Plane",
     "description": "Enter your access key to continue",
     "accessKey": "Access key",
     "accessKeyPlaceholder": "Enter access key",
@@ -2426,7 +2426,7 @@
       "emptyTitle": "No knowledge banks yet",
       "emptyBody": "Create one, then upload PDFs, images, audio, video or text into it.",
       "loadFailed": "Could not load knowledge banks",
-      "loadFailedBody": "The Hindsight API did not answer. Check that it is running and try again.",
+      "loadFailedBody": "The Portal API did not answer. Check that it is running and try again.",
       "retry": "Try again"
     },
     "create": {

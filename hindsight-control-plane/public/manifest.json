@@ -1,6 +1,6 @@
 {
-  "name": "Hindsight Control Plane",
-  "short_name": "Hindsight",
+  "name": "Portal Control Plane",
+  "short_name": "Portal",
   "start_url": ".",
   "display": "browser",
   "background_color": "#F3F5F9",
