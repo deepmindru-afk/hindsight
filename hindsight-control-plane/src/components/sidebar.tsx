@@ -198,7 +198,7 @@ export function Sidebar<T extends string = NavItem>({
                 "mb-2 text-xs text-muted-foreground/60 text-center select-none",
                 isCollapsed ? "px-0" : "px-1"
               )}
-              title={`Hindsight API v${apiVersion}`}
+              title={`Portal API v${apiVersion}`}
             >
               {isCollapsed ? `v${apiVersion}` : `PortalMem v${apiVersion}`}
             </div>
