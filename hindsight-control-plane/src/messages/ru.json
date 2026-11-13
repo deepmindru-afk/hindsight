@@ -44,7 +44,7 @@
     "matchAllTooltip": "Сопоставьте все выбранные теги"
   },
   "nav": {
-    "home": "Иди домой.",
+    "home": "Обзор",
     "darkMode": "Переход в темный режим",
     "lightMode": "Переключение в режим Light",
     "bank": {
@@ -2277,7 +2277,7 @@
     "advancedIdle": "Запустите запрос, чтобы увидеть результат и необработанный ответ."
   },
   "home": {
-    "title": "Домой",
+    "title": "Обзор",
     "subtitle": "Обзор",
     "statMemories": "Воспоминания",
     "statObservations": "Замечания",
@@ -2447,7 +2447,7 @@
     "bank": {
       "allBanks": "Банки знаний",
       "notFound": "Банк знаний не существует",
-      "navHome": "Домой",
+      "navHome": "Обзор",
       "navDocuments": "Документы",
       "navSearch": "Поиск",
       "navSettings": "Настройки",
@@ -2566,7 +2566,7 @@
       "size": "Размер",
       "kindsTitle": "Документы по видам",
       "recentTitle": "Недавно обновленный",
-      "title": "Домой",
+      "title": "Обзор",
       "subtitle": "Обзор банка знаний",
       "activityTitle": "Документы и пассажи добавлены",
       "addedInPeriod": "{count, plural, one {# document} other {# documents}} add",
