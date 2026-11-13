@@ -252,7 +252,7 @@ export function Sidebar<T extends string = NavItem>({
             {renderNav(false)}
             {apiVersion && (
               <div className="border-t border-border p-3 text-center text-xs text-muted-foreground/60">
-                {`Hindsight v${apiVersion}`}
+                {`Portal Mem v${apiVersion}`}
               </div>
             )}
           </DialogPrimitive.Content>

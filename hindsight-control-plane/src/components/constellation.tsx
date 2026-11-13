@@ -1570,7 +1570,7 @@ export function Constellation({
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "hindsight-constellation.svg";
+    link.download = "constellation.svg";
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

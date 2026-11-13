@@ -22,7 +22,7 @@ const FALLBACK_COLOR = "#0074d9";
 const GRAPH_NODE_CAP = 200;
 // Cluster the memory constellation by fact type, matching the memories charts.
 const TYPE_COLORS: Record<string, string> = {
-  world: "#8b5cf6",
+  world: "#130e1d",
   experience: "#ec4899",
   observation: "#6366f1",
   entity: "#0ea5e9",
