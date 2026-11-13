@@ -148,8 +148,8 @@
       "collapseSidebar": "сбоку от обрушения",
       "collapse": "крах",
       "pages": "Страницы",
-      "home": "Домой",
-      "openNavigation": "Открытая навигация"
+      "home": "Обзор",
+      "openNavigation": "Навигация"
     },
     "overviewAndOperations": "Обзор статистики и фоновых операций для этого банка памяти.",
     "operations": "Операции",
