@@ -5,7 +5,6 @@ import { routing } from "./routing";
 // Static imports keep Turbopack/Webpack happy — dynamic template imports
 // don't resolve at build time.
 const loaders = {
-  ru: () => import("../messages/ru.json"),
   en: () => import("../messages/en.json"),
   es: () => import("../messages/es.json"),
   fr: () => import("../messages/fr.json"),
