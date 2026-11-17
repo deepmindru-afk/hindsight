@@ -10,8 +10,6 @@ import asyncio
 import io
 import json
 import math
-import shutil
-import subprocess
 import uuid
 from dataclasses import replace
 
@@ -26,7 +24,6 @@ from hindsight_api.knowledge.store import StatusUpdate
 
 KB = "/v1/default/knowledge-banks"
 _AXES = ("red", "blue", "key", "password", "invoice", "audio", "video", "green")
-needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
 
 
 class FakeEmbedder(KnowledgeEmbedder):
@@ -115,16 +112,28 @@ def _text_pdf(text: str) -> bytes:
 
 
 def _tone(seconds: int, *, video: bool) -> bytes:
-    with __import__("tempfile").TemporaryDirectory() as tmp:
-        out = f"{tmp}/clip.{'mp4' if video else 'm4a'}"
-        args = ["ffmpeg", "-loglevel", "error", "-y"]
-        if video:
-            args += ["-f", "lavfi", "-i", f"testsrc=duration={seconds}:size=160x120:rate=5"]
-        args += ["-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}"]
-        if video:
-            args += ["-c:v", "libx264", "-pix_fmt", "yuv420p"]
-        subprocess.run([*args, "-c:a", "aac", "-shortest", out], check=True)
-        return open(out, "rb").read()
+    """A 440 Hz tone (and a moving test picture), made with PyAV so no ffmpeg program is needed."""
+    import av
+    import numpy as np
+
+    out = io.BytesIO()
+    with av.open(out, "w", format="mp4") as dst:
+        a = dst.add_stream("aac", rate=16000, layout="mono")
+        v = dst.add_stream("libx264", rate=5) if video else None
+        if v is not None:
+            v.width, v.height, v.pix_fmt = 160, 120, "yuv420p"
+            for i in range(seconds * 5):
+                picture = np.full((120, 160, 3), (i * 7) % 255, np.uint8)
+                dst.mux(v.encode(av.VideoFrame.from_ndarray(picture, format="rgb24")))
+            dst.mux(v.encode(None))
+        step = 1024  # AAC frame size
+        samples = np.sin(2 * np.pi * 440 * np.arange(seconds * 16000) / 16000).astype(np.float32)
+        for start in range(0, samples.size, step):
+            frame = av.AudioFrame.from_ndarray(samples[None, start : start + step], format="fltp", layout="mono")
+            frame.sample_rate, frame.pts = 16000, start
+            dst.mux(a.encode(frame))
+        dst.mux(a.encode(None))
+    return out.getvalue()
 
 
 # --- chunking (no database) ---------------------------------------------------------------------
@@ -210,13 +219,11 @@ def test_passages_follow_structure_and_keep_exact_order():
     assert any(c.startswith("5. TERMINATION") for c in chunks)
 
 
-@needs_ffmpeg
 def test_audio_and_video_are_cut_into_timed_windows():
     audio = list(
         media.split_media(
             _tone(70, video=False),
             "audio",
-            filename="a.m4a",
             window_seconds=30,
             overlap_seconds=5,
             max_seconds=3600,
@@ -225,15 +232,18 @@ def test_audio_and_video_are_cut_into_timed_windows():
     assert [(d.start_ms, d.modality) for d in audio] == [(0, "audio"), (25000, "audio"), (50000, "audio")]
     assert audio[-1].end_ms == pytest.approx(70000, abs=200)
     video = list(
-        media.split_media(
-            _tone(8, video=True), "video", filename="v.mp4", window_seconds=30, overlap_seconds=5, max_seconds=3600
-        )
+        media.split_media(_tone(8, video=True), "video", window_seconds=30, overlap_seconds=5, max_seconds=3600)
     )
     assert len(video) == 1 and video[0].mime == "video/mp4"
     assert media.decode_video_frames(video[0].data or b"").shape[1:] == (448, 448, 3)
     assert media.decode_audio_pcm(video[0].data or b"").size > 16000 * 7
     with pytest.raises(media.MediaError, match="limit is 5s"):
-        list(media.split_media(_tone(8, video=False), "audio", filename="a.m4a", window_seconds=30, overlap_seconds=5, max_seconds=5))  # fmt: skip
+        list(media.split_media(_tone(8, video=False), "audio", window_seconds=30, overlap_seconds=5, max_seconds=5))  # fmt: skip
+
+
+def test_unreadable_media_is_a_media_error():
+    with pytest.raises(media.MediaError, match="unreadable media"):
+        list(media.split_media(b"not a video", "video", window_seconds=30, overlap_seconds=5, max_seconds=60))
 
 
 # --- HTTP ---------------------------------------------------------------------------------------
@@ -474,6 +484,124 @@ async def test_tag_and_media_type_filters_only_keep_what_the_caller_asked_for(ap
     assert bad.status_code == 422
 
 
+async def test_tags_match_and_tag_groups_follow_memory_recall_rules(api_client, kb):
+    await _upload(
+        api_client,
+        kb,
+        [(f"{n}.png", _png((255 - i, i, 0)), "image/png") for i, n in enumerate("abc")],
+        documents=[
+            {"document_id": "a", "tags": ["cloud", "v2"]},
+            {"document_id": "b", "tags": ["oss"]},
+            {"document_id": "c"},
+        ],
+    )
+
+    async def ids(**body) -> list[str]:
+        return sorted(r["document_id"] for r in await _search(api_client, kb, query="red", **body))
+
+    # any / all keep untagged documents, the _strict modes and exact drop them: as memory recall does.
+    assert await ids(tags=["oss"]) == ["b", "c"]
+    assert await ids(tags=["oss"], tags_match="any_strict") == ["b"]
+    assert await ids(tags=["cloud", "v2"], tags_match="all") == ["a", "c"]
+    assert await ids(tags=["cloud", "v2"], tags_match="all_strict") == ["a"]
+    assert await ids(tags=["cloud"], tags_match="exact") == []
+    assert await ids(tags=["v2", "cloud"], tags_match="exact") == ["a"]
+    assert await ids(tags=[], tags_match="exact") == ["c"]
+
+    strict = lambda *tags: {"tags": list(tags), "match": "any_strict"}  # noqa: E731
+    assert await ids(tag_groups=[{"or": [strict("oss"), strict("v2")]}]) == ["a", "b"]
+    assert await ids(tag_groups=[{"not": strict("oss")}]) == ["a", "c"]
+    assert await ids(tag_groups=[{"and": [strict("cloud"), {"not": strict("oss")}]}]) == ["a"]
+    # Fuzzy leaves resolve against this bank's own document tags.
+    fuzzy = {"tags": ["clouds"], "match": "any_strict", "resolve": "fuzzy"}
+    assert await ids(tag_groups=[fuzzy]) == ["a"]
+    # Tags and groups AND together.
+    assert await ids(tags=["oss"], tags_match="any", tag_groups=[{"not": strict("oss")}]) == ["c"]
+
+
+async def _linked_memory_bank(api_client, kb: str, **settings) -> str:
+    mem_bank = f"mem-{uuid.uuid4().hex[:8]}"
+    await api_client.post(f"/v1/default/banks/{mem_bank}/memories", json={"items": [{"content": "Red cars."}]})
+    r = await api_client.patch(
+        f"/v1/default/banks/{mem_bank}/config", json={"updates": {"knowledge_banks": [kb], **settings}}
+    )
+    assert r.status_code == 200, r.text
+    return mem_bank
+
+
+async def test_reflect_searches_linked_banks_with_its_tags_and_the_banks_media_types(
+    api_client, memory, kb, request_context
+):
+    from hindsight_api.engine.reflect.tools import tool_recall
+
+    await _upload(
+        api_client,
+        kb,
+        [("keys.png", _png((255, 0, 0)), "image/png"), ("notes.txt", b"red notes for team b", "text/plain")],
+        documents=[{"document_id": "keys", "tags": ["team:a"]}, {"document_id": "notes", "tags": ["team:b"]}],
+    )
+
+    async def docs(mem_bank: str, **kwargs) -> list[str]:
+        out = await tool_recall(memory, mem_bank, "red", request_context, include_documents=True, **kwargs)
+        return sorted(d["document_id"] for d in out.get("documents", []))
+
+    tagged = await _linked_memory_bank(api_client, kb)
+    assert await docs(tagged) == ["keys", "notes"]
+    assert await docs(tagged, tags=["team:a"], tags_match="any_strict") == ["keys"]
+    from hindsight_api.engine.search.tags import TagGroupLeaf
+
+    group = [TagGroupLeaf(tags=["team:b"], match="any_strict")]
+    assert await docs(tagged, tag_groups=group) == ["notes"]
+
+    # With apply_tags off, the reflect's tags filter its memories only.
+    untagged = await _linked_memory_bank(api_client, kb, reflect_kb_search_apply_tags=False)
+    assert await docs(untagged, tags=["team:a"], tags_match="any_strict") == ["keys", "notes"]
+
+    text_only = await _linked_memory_bank(api_client, kb, reflect_kb_search_media_types=["text"])
+    assert await docs(text_only) == ["notes"]
+
+    bad = await api_client.patch(
+        f"/v1/default/banks/{text_only}/config", json={"updates": {"reflect_kb_search_media_types": ["hologram"]}}
+    )
+    assert bad.status_code == 400 and "hologram" in bad.text
+    # The pictures are the server's to set, not a bank's.
+    per_bank = await api_client.patch(
+        f"/v1/default/banks/{text_only}/config", json={"updates": {"reflect_kb_search_max_images": 2}}
+    )
+    assert per_bank.status_code == 400 and "reflect_kb_search_max_images" in per_bank.text
+    for bank in (tagged, untagged, text_only):
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+async def test_reflect_hands_the_model_the_pictures_of_image_hits_up_to_its_cap(
+    api_client, memory, kb, request_context
+):
+    from hindsight_api.engine.reflect.tools import KB_IMAGES_KEY, tool_recall
+
+    await _upload(
+        api_client,
+        kb,
+        [
+            ("keys.png", _png((255, 0, 0)), "image/png"),
+            ("door.png", _png((250, 5, 5)), "image/png"),
+            ("notes.txt", b"red notes", "text/plain"),
+        ],
+    )
+    mem_bank = await _linked_memory_bank(api_client, kb)
+
+    out = await tool_recall(memory, mem_bank, "red", request_context, include_documents=True, kb_images=1)
+    labels = [p["text"] for p in out[KB_IMAGES_KEY] if p["type"] == "text"]
+    images = [p["image_url"]["url"] for p in out[KB_IMAGES_KEY] if p["type"] == "image_url"]
+    assert len(images) == 1 and images[0].startswith("data:image/png;base64,")
+    # The hit it belongs to says so, under the same label; the text hit and the other image do not.
+    assert [d["picture"] for d in out["documents"] if "picture" in d] == labels
+    assert labels[0].startswith(("Picture of keys.png", "Picture of door.png"))
+
+    none = await tool_recall(memory, mem_bank, "red", request_context, include_documents=True)
+    assert KB_IMAGES_KEY not in none and not any("picture" in d for d in none["documents"])
+    await memory.delete_bank(mem_bank, request_context=request_context)
+
+
 async def test_rewriting_a_document_is_a_noop_when_unchanged_and_a_replace_otherwise(api_client, kb, fake_embedder):
     first = await _upload(api_client, kb, [("p.png", _png((255, 0, 0)), "image/png")], [{"document_id": "p"}])
     assert len(first.json()["operation_ids"]) == 1
@@ -514,7 +642,6 @@ async def test_bad_writes_are_refused_or_reported_never_silently_dropped(api_cli
     assert (await api_client.post(f"{KB}/{kb}/search", json={})).status_code == 400
 
 
-@needs_ffmpeg
 async def test_audio_and_video_passages_carry_their_time_ranges_and_clips(api_client, kb):
     await _upload(
         api_client,
@@ -1932,3 +2059,45 @@ async def test_a_bank_delete_does_not_wait_forever_on_held_documents(api_client,
     monkeypatch.setattr(service_mod, "DELETE_WAIT_SECONDS", 0)
     assert (await api_client.delete(f"{KB}/{kb}")).status_code == 200
     assert (await api_client.get(f"{KB}/{kb}")).status_code == 404
+
+
+async def test_reflect_searches_linked_banks_at_the_servers_budget(
+    api_client, memory, kb, request_context, monkeypatch
+):
+    from hindsight_api.config import _parse_reflect_kb_search_budget, clear_config_cache
+    from hindsight_api.engine.reflect.tools import tool_recall
+
+    await _upload(api_client, kb, [("keys.png", _png((255, 0, 0)), "image/png")])
+    mem_bank = await _linked_memory_bank(api_client, kb)
+    service = get_knowledge_service(memory)
+    budgets: list[str] = []
+    search = service.search
+
+    async def spy(bank_id, request, request_context, trace=None):
+        budgets.append(request.budget)
+        return await search(bank_id, request, request_context, trace)
+
+    monkeypatch.setattr(service, "search", spy)
+    await tool_recall(memory, mem_bank, "red", request_context, include_documents=True)
+    monkeypatch.setenv("HINDSIGHT_API_REFLECT_KB_SEARCH_BUDGET", "high")
+    clear_config_cache()
+    await tool_recall(memory, mem_bank, "red", request_context, include_documents=True)
+    monkeypatch.delenv("HINDSIGHT_API_REFLECT_KB_SEARCH_BUDGET")
+    clear_config_cache()
+
+    assert budgets == ["mid", "high"]
+    with pytest.raises(ValueError, match="REFLECT_KB_SEARCH_BUDGET"):
+        _parse_reflect_kb_search_budget("deep")
+    await memory.delete_bank(mem_bank, request_context=request_context)
+
+
+async def test_re_ingesting_with_reordered_tags_is_unchanged(api_client, kb):
+    """#6591: the same tags in another order are not a change, so nothing is re-indexed."""
+    r = await api_client.post(
+        f"{KB}/{kb}/ingest", json={"items": [{"document_id": "a", "text": "red", "tags": ["x", "y"]}]}
+    )
+    assert r.status_code == 200, r.text
+    r = await api_client.post(
+        f"{KB}/{kb}/ingest", json={"items": [{"document_id": "a", "text": "red", "tags": ["y", "x"]}]}
+    )
+    assert r.json()["unchanged_document_ids"] == ["a"]

@@ -55,7 +55,7 @@ from .structured_doc import (
     split_markdown,
 )
 from .tokenization import count_prompt_tokens
-from .tools import returned_memories
+from .tools import KB_IMAGES_KEY, returned_memories
 from .tools_schema import get_reflect_tools
 
 #: Bounds on any token argument the model supplies to a retrieval tool. Below the
@@ -168,6 +168,9 @@ _COMPACTED_TOOL_RESULT = "[Earlier tool result omitted to fit the context budget
 #: written); more than that is a model that will not comply, and spending the
 #: rest of the iteration budget on it costs a reflect either way.
 _MAX_DOCUMENT_REJECTIONS = 1
+
+#: How many times a ``done`` with no answer in it is sent back before the run fails (#6520).
+_MAX_EMPTY_ANSWER_REASKS = 1
 
 #: A loop turn's default output cap when the closing step writes the answer, so the turn only
 #: names a search (its reply is held to a response schema, see providers/tools_via_schema). The
@@ -708,6 +711,9 @@ async def _run_reflect_agent_inner(
     tool_trace_summary: list[dict[str, Any]] = []
     llm_trace: list[dict[str, Any]] = []
     context_history: list[dict[str, Any]] = []  # For final prompt fallback
+    # Every knowledge-bank picture the run was shown: the standalone synthesis rebuilds its prompt
+    # from ``context_history``, which is text, so it gets them back from here.
+    knowledge_pictures: list[dict[str, Any]] = []
 
     def _record_llm(entry: dict[str, Any]) -> None:
         # Recorded as the call ends, so its start is now minus its duration.
@@ -791,21 +797,29 @@ async def _run_reflect_agent_inner(
         system_prompt: str,
         completion_cap: int | None,
         temperature: float | None = None,
+        pictures: list[dict[str, Any]] | None = None,
     ) -> str:
         """One tool-less LLM call with usage/trace accounting folded in.
 
         ``temperature`` defaults to the reflect temperature, which is tuned for
         writing an answer; callers that extract rather than write override it.
+        ``pictures`` (knowledge-bank image parts) follow the prompt in the same user turn.
         """
         nonlocal total_input_tokens, total_output_tokens, total_cached_tokens, total_thoughts_tokens
         llm_start = time.perf_counter()
         queue_wait = LLMQueueWait()
         queue_token = set_queue_wait_sink(queue_wait)
+        # Any, as retain's multimodal turn is: the pictures make it a part list, not a string.
+        user_content: Any = (
+            [{"type": "text", "text": prompt}, {"type": "text", "text": _PICTURES_NOTE}, *pictures]
+            if pictures
+            else prompt
+        )
         try:
             call_result = await llm_config.call(
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
+                    {"role": "user", "content": user_content},
                 ],
                 scope="reflect",
                 temperature=get_config().llm_temperature_reflect if temperature is None else temperature,
@@ -832,7 +846,10 @@ async def _run_reflect_agent_inner(
         return response.strip()
 
     def _document_rejection_messages(
-        done_call: "LLMToolCall", exc: DocumentSectionsInvalidError
+        done_call: "LLMToolCall",
+        errors: Sequence[str],
+        instruction: str = "Your done() call could not be read, so it was discarded. "
+        "Call done() again with the same content, fixing: ",
     ) -> list[dict[str, Any]]:
         """The rejected ``done`` call and why, as the messages that re-ask for it.
 
@@ -849,10 +866,7 @@ async def _run_reflect_agent_inner(
                 "tool_call_id": wire_id,
                 "content": json.dumps(
                     {
-                        "error": (
-                            "Your done() call could not be read, so it was discarded. "
-                            "Call done() again with the same content, fixing: " + "; ".join(exc.errors)
-                        ),
+                        "error": instruction + "; ".join(errors),
                     },
                     ensure_ascii=False,
                 ),
@@ -942,9 +956,21 @@ async def _run_reflect_agent_inner(
         """
         feedback: Sequence[dict[str, Any]] = ()
         rejections = 0
+        empty_answers = 0
         while True:
             reply = await _ask_for_done(feedback)
             closing = next((tc for tc in reply.tool_calls if _is_done_tool(tc.name)), None) if reply else None
+            if reply is not None and closing is not None and empty_answers < _MAX_EMPTY_ANSWER_REASKS:
+                missing = _missing_done_answer(closing, reply.finish_reason, answer_as_document)
+                if missing:
+                    empty_answers += 1
+                    logger.warning(f"[REFLECT {reflect_id}] closing done carried no answer; asking once more")
+                    feedback = _document_rejection_messages(
+                        closing,
+                        [missing],
+                        "Your done() call carried no answer, so it was discarded. Call done() again: ",
+                    )
+                    continue
             if reply is None or closing is None:
                 if rejections:
                     # A done was already refused on this path. The refusal stands,
@@ -984,7 +1010,7 @@ async def _run_reflect_agent_inner(
                 logger.warning(f"[REFLECT {reflect_id}] closing done document rejected (attempt {rejections}): {exc}")
                 if rejections > _MAX_DOCUMENT_REJECTIONS:
                     raise
-                feedback = _document_rejection_messages(closing, exc)
+                feedback = _document_rejection_messages(closing, exc.errors)
 
     async def _forced_final_synthesis(iterations_completed: int) -> ReflectAgentResult:
         """Answer without tools from the accumulated tool results.
@@ -1017,7 +1043,9 @@ async def _run_reflect_agent_inner(
                 max_tokens=max_tokens,
                 llm_output_language=llm_output_language,
             )
-            answer = await _tracked_llm_call(prompt, "final", final_system, synthesis_max_completion_tokens)
+            answer = await _tracked_llm_call(
+                prompt, "final", final_system, synthesis_max_completion_tokens, pictures=knowledge_pictures
+            )
         else:
             log = logger.warning if len(chunks) > _SPLIT_SYNTHESIS_WARN_CHUNKS else logger.info
             log(
@@ -1046,7 +1074,9 @@ async def _run_reflect_agent_inner(
                 max_tokens=max_tokens,
                 llm_output_language=llm_output_language,
             )
-            answer = await _tracked_llm_call(prompt, "final", final_system, synthesis_max_completion_tokens)
+            answer = await _tracked_llm_call(
+                prompt, "final", final_system, synthesis_max_completion_tokens, pictures=knowledge_pictures
+            )
 
         if not (answer or "").strip():
             # Tools were disabled for this call and the model still returned nothing.
@@ -1526,7 +1556,13 @@ async def _run_reflect_agent_inner(
             # A document (a page refresh) still goes through the closing step: the page update
             # merges only the facts the answer cites, and the free turn's done cited fewer of them
             # (a Q2 count lost two of four new customers on the refresh-pages eval, hq-count-billing).
-            if not decision_orchestrated or decision_model_failed or answer_as_document:
+            # A done with no answer in it goes there too, where it is asked for once more.
+            if (
+                not decision_orchestrated
+                or decision_model_failed
+                or answer_as_document
+                or _missing_done_answer(done_call, result.finish_reason, answer_as_document)
+            ):
                 return await (_forced_final_synthesis if compacted else _finish)(iteration + 1)
 
             from hindsight_api.tracing import get_tracer
@@ -1566,7 +1602,7 @@ async def _run_reflect_agent_inner(
                     )
                     if document_rejections > _MAX_DOCUMENT_REJECTIONS or iteration >= max_iterations - 1:
                         raise
-                    messages.extend(_document_rejection_messages(done_call, exc))
+                    messages.extend(_document_rejection_messages(done_call, exc.errors))
                     continue
 
         # After a "not enough" verdict: the LLM wrote its next search, and that query
@@ -1692,6 +1728,9 @@ async def _run_reflect_agent_inner(
             tools_started_at_ms = _now_ms()
             tool_results = await asyncio.gather(*tool_tasks, return_exceptions=True)
             total_tools_called += len(other_tools)
+            # Out before the pruning, the presenter and the trace read the outputs: none of them
+            # can use an image, and the trace would store every one of them as base64.
+            round_pictures = _pop_knowledge_pictures(tool_results)
 
             if (
                 decision_orchestrated
@@ -1868,6 +1907,12 @@ async def _run_reflect_agent_inner(
                         "content": tool_output,
                     }
                 )
+            if round_pictures:
+                knowledge_pictures.extend(round_pictures)
+                # Tool results reach the model as user turns (tools_via_schema), which this one joins.
+                messages.append(
+                    {"role": "user", "content": [{"type": "text", "text": _PICTURES_NOTE}, *round_pictures]}
+                )
 
     # Unreachable in practice: the last iteration returns the forced synthesis
     # above, so the loop cannot fall out of the bottom. Kept as a hard failure
@@ -1877,6 +1922,21 @@ async def _run_reflect_agent_inner(
         f"Reflect exhausted its {max_iterations} iteration(s) without producing an answer "
         f"({total_tools_called} tool call(s) made)."
     )
+
+
+_PICTURES_NOTE = (
+    "The pictures of the knowledge-bank passages in the results above, each after its label "
+    "(a result's `picture` field). Read them as part of those documents."
+)
+
+
+def _pop_knowledge_pictures(tool_results: list[Any]) -> list[dict[str, Any]]:
+    """The knowledge-bank pictures the round's recall calls returned, taken out of their outputs."""
+    parts: list[dict[str, Any]] = []
+    for result in tool_results:
+        if isinstance(result, tuple) and isinstance(result[0], dict):
+            parts.extend(result[0].pop(KB_IMAGES_KEY, None) or [])
+    return parts
 
 
 def _fresh_usable_pages(tool_calls: list["LLMToolCall"], tool_results: list[Any]) -> dict[str, Any] | None:
@@ -2285,6 +2345,24 @@ def _done_arguments(done_call: "LLMToolCall", finish_reason: str | None) -> dict
     # Repair only ever returns a dict, and a plain parse of what the provider
     # already failed to parse fails again — so this is a dict or it raised.
     return _decode_json_argument(args["_raw"], finish_reason)
+
+
+def _missing_done_answer(done_call: "LLMToolCall", finish_reason: str | None, as_document: bool) -> str | None:
+    """Why ``done`` holds no answer, in words the model can fix; ``None`` if it holds one.
+
+    The same reading ``_process_done_tool`` makes. A reply no schema held can leave the answer out:
+    gpt-oss answered a forced ``done`` with ``answer_ready``'s lone ``answer_found`` (#6520). A payload
+    that does not parse is not this case: its own re-ask handles it (``_done_arguments``).
+    """
+    try:
+        args = _done_arguments(done_call, finish_reason)
+    except DocumentSectionsInvalidError:
+        return None
+    text = args.get("markdown") if isinstance(args.get("markdown"), str) else args.get("answer")
+    if isinstance(text, str) and text.strip():
+        return None
+    field = "markdown" if as_document else "answer"
+    return f"the call has no `{field}`: write the full answer in `{field}`, not only `answer_found`"
 
 
 #: Which alias prefix each of done's id fields cites (presentation._LISTS).
