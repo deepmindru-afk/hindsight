@@ -12,10 +12,12 @@ embeds the query into the same space and returns the nearest passages.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import itertools
 import json
 import logging
+import math
 import re
 import threading
 import time
@@ -26,14 +28,19 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
+import aiohttp
+
 from ..config import get_config
 from ..engine import bank_aliases
+from ..engine.aiohttp_session import UpstreamHTTPError
 from ..engine.db_utils import acquire_with_retry
+from ..engine.decision_model import DecisionAsset, DecisionRefusedError, jev_accepts
 from ..engine.operation_metadata import KnowledgeIngestChildMetadata, KnowledgeIngestParentMetadata
 from ..engine.response_models import KnowledgeDocumentHit
 from ..engine.retain import bank_utils
 from ..engine.retain import timing as _timing
 from ..engine.schema import fq_table
+from ..engine.search.decision_reranker import DecisionModelReranker
 from ..engine.search.tag_resolution import MAX_VOCABULARY, TagResolutionError, needs_resolution, resolve_tag_groups
 from ..engine.storage import bank_storage_prefix, key_segment
 from ..engine.token_encoding import count_tokens
@@ -130,6 +137,80 @@ class KnowledgeBankError(Exception):
     def __init__(self, message: str, status_code: int = 400) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+#: The decision model's order is fused with the search's (reciprocal rank fusion), not trusted outright: a
+#: yes/no judgement per hit promotes deep hits it wrongly says yes to. Over the best 100, own language, Jev
+#: 1.14 + EmbeddingGemma 2: ViDoRe V3 PDF 65.40 (model's order) -> 66.80 fused at k=60 (search alone 59.42),
+#: ATM-Bench recall@10 89.55 -> 89.34 (85.27). The model's rank then counts twice the search's, at k=30:
+#: PDF hr + computer_science 76.02 -> 76.99, markdown (4 subsets, hits judged with their context) 66.42 ->
+#: 67.04 over k=60 with equal weights. Scoring by the model's probability instead won on markdown (67.55) and
+#: lost on PDF, where a page is judged from its image.
+RERANK_FUSION_K = 30
+RERANK_MODEL_WEIGHT = 2.0
+
+
+#: A text hit is judged with the text around it, up to this many tokens: a 256-token passage alone lost
+#: what its page says about it. ViDoRe V3 markdown (Jev 1.14, own language) nDCG@10, the passage vs its
+#: whole page judged: finance_en 60.98 -> 72.61, hr 66.58 -> 70.31, pharmaceuticals 66.06 -> 67.75,
+#: industrial 56.60 -> 60.73.
+JUDGE_CONTEXT_TOKENS = 2048
+#: The best hits after fusion that one Choice then reorders (``DecisionModelReranker.pick``): each moves by
+#: its pick probability plus 1/log2(its place + 2), so a clear pick climbs and a coin toss keeps the order.
+#: 5 and 10 were within 0.5 nDCG@10 of each other on ViDoRe markdown; 5 keeps one request of 5 page images.
+RERANK_PICK = 5
+#: Passages loaded on each side of a text hit before trimming to ``JUDGE_CONTEXT_TOKENS``.
+_JUDGE_SPAN = 16
+#: How deep the rerank looks for its candidates, in multiples of ``kb_decision_model_candidates``:
+#: hits that share a candidate (``_reranked``) do not count, so the candidates come from further down.
+_JUDGE_POOL = 3
+
+
+def _around(run: list[KnowledgePassage], index: int, max_tokens: int) -> str:
+    """The passages of ``run`` around passage ``index``, grown one side then the other while they fit."""
+    at = next((n for n, p in enumerate(run) if p.index == index), None)
+    if at is None:
+        return ""
+    first = last = at
+    used = count_tokens(run[at].text or "")
+    grew = True
+    while grew:
+        grew = False
+        for side in (-1, 1):
+            n = first - 1 if side < 0 else last + 1
+            if 0 <= n < len(run) and run[n].index == run[at].index + (n - at):
+                cost = count_tokens(run[n].text or "")
+                if used + cost <= max_tokens:
+                    used += cost
+                    first, last = min(first, n), max(last, n)
+                    grew = True
+    return "\n\n".join(p.text or "" for p in run[first : last + 1])
+
+
+def fused_order(size: int, model_scores: dict[int, float]) -> list[int]:
+    """The search slots ``0..size-1`` ordered by the fusion of their search rank and the decision model's
+    rank (``model_scores``: slot -> score). A slot the model did not judge (a video) takes its search rank
+    as its model rank. Ties keep the search's order."""
+    model_rank = {slot: slot for slot in range(size)}
+    for rank, slot in enumerate(sorted(model_scores, key=lambda s: -model_scores[s])):
+        model_rank[slot] = rank
+    fused = {
+        slot: 1 / (RERANK_FUSION_K + slot) + RERANK_MODEL_WEIGHT / (RERANK_FUSION_K + rank)
+        for slot, rank in model_rank.items()
+    }
+    return sorted(range(size), key=lambda slot: -fused[slot])
+
+
+def picked_order(head: list[int], picked: dict[int, float]) -> list[int]:
+    """``head`` (candidates, best first) reordered by the pick: each picked candidate by its probability
+    (``picked``) plus ``1/log2(position+2)``, so a sure pick moves up and a split one keeps the order. Only
+    the picked candidates move, among their own positions: one the pick did not compare (a video) stays."""
+    slots = [m for m, n in enumerate(head) if n in picked]
+    ranked = sorted(slots, key=lambda m: -(picked[head[m]] + 1 / math.log2(m + 2)))
+    out = list(head)
+    for slot, m in zip(slots, ranked, strict=True):
+        out[slot] = head[m]
+    return out
 
 
 @dataclass
@@ -397,6 +478,19 @@ def _passage_bytes(draft: media.PassageDraft, vectors: list[list[float]]) -> int
     return len(draft.data or b"") + len(draft.text or "") + sum(_vector_bytes(v) for v in vectors)
 
 
+#: Bytes of stored media per content token, for a binary file whose content is bytes, not words
+#: (a high-bitrate video is the tightest case). Text is counted by its own tokens instead.
+_MEDIA_BYTES_PER_CONTENT_TOKEN = 5120
+
+
+def _content_tokens(item: IngestItem) -> int:
+    """A document's billable content size. Text (the text-ingest API, or an uploaded .txt/.md) is
+    counted by its tokens; any other file is counted by its size at ``_MEDIA_BYTES_PER_CONTENT_TOKEN``."""
+    if (item.content_type or "").startswith("text/"):
+        return count_tokens(item.data.decode("utf-8", "ignore"))
+    return -(-len(item.data) // _MEDIA_BYTES_PER_CONTENT_TOKEN)  # ceil(bytes / rate)
+
+
 class _MemoryBudget:
     """The bytes of cut-but-uncommitted passages (their text, file and vectors) one batch may hold, as
     retain bounds its extracted-but-unwritten facts: the splitter reserves a passage's cost before queueing
@@ -526,6 +620,8 @@ class KnowledgeService:
         self._engine = engine
         self._embedder: KnowledgeEmbedder | None = None
         self._store: KnowledgeStore | None = None
+        self._reranker: DecisionModelReranker | None = None
+        self._reranker_resolved = False
 
     # --- wiring -----------------------------------------------------------------------------
 
@@ -534,6 +630,15 @@ class KnowledgeService:
         if self._embedder is None:
             self._embedder = create_knowledge_embedder(get_config(), self._engine.embeddings)
         return self._embedder
+
+    @property
+    def reranker(self) -> DecisionModelReranker | None:
+        """Recall's decision reranker on the knowledge decision model, or None when none is set up for it."""
+        if not self._reranker_resolved:
+            setup = get_config().decision_model_config("kb")
+            self._reranker = DecisionModelReranker.from_config(setup) if setup else None
+            self._reranker_resolved = True
+        return self._reranker
 
     @property
     def store(self) -> KnowledgeStore:
@@ -714,6 +819,7 @@ class KnowledgeService:
         # What the bank holds now, read before the delete, so storage metering can decrement it.
         bank_passages = (await self.store.bank_stats([bank_id])).get(bank_id)
         passages_removed = bank_passages.passage_count if bank_passages else 0
+        content_tokens_removed = bank_passages.content_tokens if bank_passages else 0
         # Its queued ingests are cancelled first (the worker no longer claims them), then its documents
         # go a batch per transaction: the banks row cascades to kb_documents -> kb_passages -> vectors,
         # and on a 100k-document bank that one cascading statement ran past the command timeout
@@ -736,7 +842,7 @@ class KnowledgeService:
             await asyncio.sleep(1)
         await self._engine.delete_bank(bank_id, request_context=request_context, _knowledge_bank=True)
         await self._engine._file_storage.delete_prefix(f"{bank_storage_prefix(bank_id)}kb/")
-        await self._on_delete_complete(bank_id, request_context, passages_removed)
+        await self._on_delete_complete(bank_id, request_context, passages_removed, content_tokens_removed)
 
     # --- per-bank settings ------------------------------------------------------------------
 
@@ -1051,6 +1157,7 @@ class KnowledgeService:
                     passage_count=before.passage_count if before else 0,
                     tags=item.tags,
                     source_document_id=e.source_document_id,
+                    content_tokens=_content_tokens(item),
                 )
             )
         # Saved one after another, these were most of an ingest's time (a commit each on Postgres, a few
@@ -1180,7 +1287,12 @@ class KnowledgeService:
                     image_tokens=image_tokens if draft.modality == "image" else None,
                 ),
             )
-        ]
+        ] + (
+            # Shared by its window's passages: the batch embeds the same input once (``_embed_round``).
+            [_Embedding("window", 0, EmbedInput(modality="text", text=draft.window_text, title=title))]
+            if draft.window_text
+            else []
+        )
 
     async def process_batch(
         self,
@@ -1473,6 +1585,7 @@ class KnowledgeService:
                     ],
                 )
             committed_passages = sum(d.committed_passages for d in kept)
+            committed_content_tokens = sum(d.document.content_tokens for d in kept)
             logger.info(
                 f"Knowledge ingest {bank_id}: {len(kept)} documents, "
                 f"{committed_passages} passages, "
@@ -1488,6 +1601,7 @@ class KnowledgeService:
                             tenant_id=(caller or {}).get("_tenant_id"),
                             api_key_id=(caller or {}).get("_api_key_id"),
                             passages=committed_passages,
+                            content_tokens=committed_content_tokens,
                         )
                     )
                 )
@@ -1574,7 +1688,11 @@ class KnowledgeService:
         plans = [self._vectors_to_embed(w.draft, w.doc.document, w.doc.title, image_tokens) for w in live]
         try:
             async with _timing.timed("embed"):
-                embedded = await self.embedder.embed_documents([e.input for plan in plans for e in plan])
+                # Each distinct input once: a text window is the same input for every passage in it.
+                inputs = [e.input for plan in plans for e in plan]
+                unique = list(dict.fromkeys(inputs))
+                vectors = dict(zip(unique, await self.embedder.embed_documents(unique), strict=True))
+                embedded = [vectors[i] for i in inputs]
         except ValueError as exc:
             if len({id(w.doc) for w in live}) == 1:
                 live[0].doc.error = exc
@@ -1706,7 +1824,14 @@ class KnowledgeService:
         deleted = await self._delete_trees(bank_id, [document_id])
         if not any(d.document_id == document_id for d in deleted):
             raise KnowledgeBankError(f"document '{document_id}' not found", 404)
-        await self._on_delete_complete(bank_id, request_context, sum(d.passage_count for d in deleted))
+        await self._on_delete_complete(
+            bank_id,
+            request_context,
+            sum(d.passage_count for d in deleted),
+            # Only passage-bearing documents, matching what ingest added: a split parent carries a
+            # content_tokens figure but its content was billed through its children.
+            sum(d.content_tokens for d in deleted if d.passage_count > 0),
+        )
 
     async def open_file(self, bank_id: str, document_id: str, request_context: RequestContext) -> OpenedFile:
         """The original upload: its byte stream, content type and filename."""
@@ -1789,6 +1914,8 @@ class KnowledgeService:
             request = await self._with_exact_tag_groups(bank_id, request)
             async with _timing.timed("store.search"):
                 hits = await self._search(bank_id, request, vector, trace)
+            async with _timing.timed("rerank"):
+                hits = await self._reranked(bank_id, request, hits)
             async with _timing.timed("context"):
                 budgeted = await self._within_budget(bank_id, hits, request.max_tokens, trace)
             if trace is not None:
@@ -1840,14 +1967,21 @@ class KnowledgeService:
         except Exception:
             logger.warning("A knowledge-bank metering hook raised; ignoring", exc_info=True)
 
-    async def _on_delete_complete(self, bank_id: str, request_context: RequestContext, passages: int) -> None:
-        """Fire the validator's post-delete hook with how many passages went with the deletion (see
-        on_knowledge_bank_delete_complete). A no-op when nothing was removed."""
+    async def _on_delete_complete(
+        self, bank_id: str, request_context: RequestContext, passages: int, content_tokens: int
+    ) -> None:
+        """Fire the validator's post-delete hook with how many passages and content tokens went with the
+        deletion (see on_knowledge_bank_delete_complete). A no-op when nothing was removed."""
         if passages <= 0:
             return
         await self._fire_completion_hook(
             lambda v: v.on_knowledge_bank_delete_complete(
-                KnowledgeBankDeleteResult(bank_id=bank_id, request_context=request_context, passages=passages)
+                KnowledgeBankDeleteResult(
+                    bank_id=bank_id,
+                    request_context=request_context,
+                    passages=passages,
+                    content_tokens=content_tokens,
+                )
             )
         )
 
@@ -1871,6 +2005,113 @@ class KnowledgeService:
             keyword_weight=get_config().kb_keyword_weight,
             trace=trace.store if trace is not None else None,
         )
+
+    async def _reranked(self, bank_id: str, request: SearchRequest, hits: list[SearchHit]) -> list[SearchHit]:
+        """``hits`` with the best ``kb_decision_model_candidates`` candidates reordered by fusing the
+        search's order with the decision model's (``RERANK_FUSION_K``); the rest keep the search's order.
+
+        A text hit is judged with the text around it (``JUDGE_CONTEXT_TOKENS``), and hits that would show the
+        model the same text (pieces of one short page) are one candidate, judged once, kept together in the
+        search's order. An image or PDF page hit is judged by its picture (``media.judge_picture``) along with
+        any text it holds. A video hit is not judged: it keeps its search position in the fusion. Only a
+        search with text is reranked: the questions ask about it."""
+        reranker = self.reranker
+        query = (request.query or "").strip()
+        if reranker is None or not query:
+            return hits
+        candidates = get_config().kb_decision_model_candidates
+        pool = hits[: candidates * _JUDGE_POOL]
+        texts = await self._judged_texts(bank_id, pool)
+        # Candidates in search order, each the hits sharing what the model would read. On ViDoRe markdown
+        # the best 100 hits held a median 43 distinct pages: the rest were pieces of those pages, judged
+        # again on the same page.
+        groups: list[list[int]] = []
+        group_of: dict[tuple[str, str | int], int] = {}
+        for i, hit in enumerate(pool):
+            same: tuple[str, str | int] = ("text", texts[i]) if hit.passage.modality == "text" else ("hit", i)
+            if same in group_of:
+                groups[group_of[same]].append(i)
+            elif len(groups) < candidates:
+                group_of[same] = len(groups)
+                groups.append([i])
+        # Videos are left out: judged by four still frames (decision models take images, not video), a
+        # clip ranked worse than search alone (MSR-VTT nDCG@10 65.85 -> 61.54). Until a model reads video.
+        judged = [n for n, group in enumerate(groups) if pool[group[0]].passage.modality != "video"]
+        if len(judged) < 2:
+            return hits
+        # A decision model that takes no images (OpenAI's) judges every hit by its text.
+        pictures = (
+            await asyncio.gather(*(self._picture(pool[groups[n][0]]) for n in judged))
+            if reranker.takes_images
+            else [None] * len(judged)
+        )
+        docs: list[str] = []
+        assets: dict[str, DecisionAsset] = {}
+        for n, picture in zip(judged, pictures, strict=True):
+            text = texts[groups[n][0]]
+            if picture is None:
+                docs.append(text)
+                continue
+            # The placeholder leads: a long page text is capped from its end, never cutting it off.
+            key = f"hs-kb-hit-{n:04d}"
+            assets[key] = DecisionAsset(format="jpg", data_base64=base64.b64encode(picture).decode())
+            docs.append(f"{key}\n\n{text}" if text else key)
+        # A page with a picture is also asked by its text alone, and the two answers averaged: the picture
+        # alone misled on text-heavy pages. ViDoRe V3 PDF nDCG@10, own language, picture+text vs the mean of
+        # both: hr 71.66 -> 71.93, computer_science 84.11 -> 85.08, pharmaceuticals 72.71 -> 72.43,
+        # finance_en 75.80 -> 76.10, industrial 63.17 -> 63.17, finance_fr 58.42 -> 58.92, energy 74.47 -> 75.27.
+        also = [m for m, n in enumerate(judged) if texts[groups[n][0]] and docs[m] != texts[groups[n][0]]]
+        try:
+            answers = await reranker.nouls(query, docs + [texts[groups[judged[m]][0]] for m in also], assets)
+            scores = answers[: len(docs)]
+            for extra, m in zip(answers[len(docs) :], also, strict=True):
+                first = scores[m]
+                if first is not None and extra is not None:
+                    scores[m] = (first + extra) / 2
+            order = fused_order(
+                len(groups), {n: s if s is not None else 0.0 for n, s in zip(judged, scores, strict=True)}
+            )
+            # The best few, compared in one question: a judgement per hit cannot tell which of several
+            # good hits is best. Videos stay out, as above.
+            doc_of = dict(zip(judged, docs, strict=True))
+            top = [n for n in order[:RERANK_PICK] if n in doc_of]
+            if len(top) > 1:
+                probabilities = await reranker.pick(query, [doc_of[n] for n in top], assets)
+                order[:RERANK_PICK] = picked_order(order[:RERANK_PICK], dict(zip(top, probabilities, strict=True)))
+        except (aiohttp.ClientError, UpstreamHTTPError, DecisionRefusedError) as exc:
+            # Named for what failed: the routes report any other upstream error as the embedder's outage.
+            raise KnowledgeBankError(f"knowledge decision model unavailable: {exc}", 503) from exc
+        ranked = [i for n in order for i in groups[n]]
+        kept = set(ranked)
+        return [pool[i] for i in ranked] + [h for i, h in enumerate(pool) if i not in kept] + hits[len(pool) :]
+
+    async def _judged_texts(self, bank_id: str, hits: list[SearchHit]) -> list[str]:
+        """The text each hit is judged by: a text passage with the passages around it, grown evenly on both
+        sides up to ``JUDGE_CONTEXT_TOKENS``; any other hit its own text."""
+
+        def span(hit: SearchHit) -> tuple[str, int, int]:
+            index = hit.passage.index
+            return hit.document.document_id, max(0, index - _JUDGE_SPAN), index + _JUDGE_SPAN
+
+        found = await self.store.passage_ranges(bank_id, [span(h) for h in hits if h.passage.modality == "text"])
+        out = []
+        for hit in hits:
+            own = hit.passage.text or ""
+            if hit.passage.modality != "text":
+                out.append(own)
+                continue
+            out.append(_around(found.get(span(hit), []), hit.passage.index, JUDGE_CONTEXT_TOKENS) or own)
+        return out
+
+    async def _picture(self, hit: SearchHit) -> bytes | None:
+        """The JPEG a decision model judges an image or PDF page hit by, or None for a hit judged by its text:
+        any other hit, and a picture System One would refuse (a side under 280 px, as a small photo or a long
+        receipt shrunk to fit), since one refused image fails the whole request."""
+        if hit.passage.modality != "image" or not hit.passage.media_key:
+            return None
+        data = await self._engine._file_storage.retrieve(hit.passage.media_key)
+        picture = await asyncio.to_thread(media.judge_picture, data)
+        return picture if jev_accepts("image/jpeg", picture) else None
 
     async def _within_budget(
         self, bank_id: str, hits: list[SearchHit], max_tokens: int, trace: SearchTrace | None = None
@@ -2031,8 +2272,10 @@ async def documents_for_memory_bank(
     if not linked or not (query or "").strip():
         return None
     # Reflect's recall runs as an internal operation, but the linked banks are read on the caller's
-    # behalf: the validator must see the caller, not a background job it would let through.
-    caller = replace(request_context, internal=False)
+    # behalf: the validator must see the caller (``internal=False``), not a background job it would
+    # let through. ``sub_operation`` marks it as part of the reflect the caller is already accounted
+    # for, so a metering extension does not charge these linked searches a second time.
+    caller = replace(request_context, internal=False, sub_operation=True)
     try:
         return await _linked_documents(engine, bank_id, linked, query, max_tokens, filters, caller)
     except Exception as exc:

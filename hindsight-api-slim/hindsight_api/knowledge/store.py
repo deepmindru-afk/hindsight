@@ -53,13 +53,17 @@ class KnowledgeDocument:
     updated_at: datetime | None = None
     #: The document an ingestion strategy split this one out of (see ingest_strategy.py).
     source_document_id: str | None = None
+    #: Its billable content size, set at creation: the tokens of its text, or — for a binary media
+    #: file whose content is bytes, not words — its size at a fixed bytes-per-token rate.
+    content_tokens: int = 0
 
 
 @dataclass
 class RoleVector:
-    """An extra vector of a passage: a PDF page's band crop, its whole text, or one of its text units."""
+    """An extra vector of a passage: a PDF page's band crop, its whole text, or one of its text units; or a
+    text passage's window (the consecutive passages around it, ``media.TEXT_WINDOW_TOKENS``)."""
 
-    role: str  # band | page_text | unit
+    role: str  # band | page_text | unit | window
     n: int
     embedding: list[float]
 
@@ -136,11 +140,11 @@ class ScoreExplain:
     """One hit's score, step by step, as ``search`` builds it."""
 
     #: Which candidate searches found it: "vector" (its main vector), "extra_vectors" (a PDF page's
-    #: bands, text or text units), "keyword".
+    #: bands, text or text units, a text passage's window), "keyword".
     found_by: list[str]
     #: Cosine similarity of the query and the passage's main vector.
     similarity: float
-    #: The best similarity of each extra vector role (band, page_text, unit, sentence).
+    #: The best similarity of each extra vector role (band, page_text, unit, sentence, window).
     roles: dict[str, float]
     #: ``page_score``: the similarity with the extra vectors mixed in.
     passage_score: float
@@ -221,6 +225,7 @@ class TimeBucket:
 class BankStats:
     document_count: int = 0
     passage_count: int = 0
+    content_tokens: int = 0
     ready_count: int = 0
     failed_count: int = 0
     pending_count: int = 0
@@ -349,6 +354,7 @@ def _document(row: Any) -> KnowledgeDocument:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         source_document_id=row["source_document_id"],
+        content_tokens=int(row["content_tokens"] or 0),
     )
 
 
@@ -366,7 +372,7 @@ def _passage(row: Any) -> KnowledgePassage:
 
 _DOC_COLUMNS = (
     "document_id, filename, content_type, media_type, size_bytes, storage_key, content_hash, status, error, "
-    "passage_count, tags, created_at, updated_at, source_document_id"
+    "passage_count, tags, created_at, updated_at, source_document_id, content_tokens"
 )
 _PASSAGE_COLUMNS = "idx, modality, text, page, start_ms, end_ms, media_key"
 #: The extra vectors that find candidates (and so sit in the HNSW index); the rest only rescore them.
@@ -493,6 +499,7 @@ class PostgresKnowledgeStore(KnowledgeStore):
                     "status": d.status,
                     "tags": d.tags,
                     "source_document_id": d.source_document_id,
+                    "content_tokens": d.content_tokens,
                 }
                 # In document_id order, the order every batch write locks rows in (see set_statuses).
                 for d in sorted(documents, key=lambda d: d.document_id)
@@ -504,7 +511,8 @@ class PostgresKnowledgeStore(KnowledgeStore):
                 WITH input AS (
                     SELECT * FROM jsonb_to_recordset($2::text::jsonb) AS x(document_id text, filename text,
                         content_type text, media_type text, size_bytes bigint, storage_key text,
-                        content_hash text, status text, tags jsonb, source_document_id text)
+                        content_hash text, status text, tags jsonb, source_document_id text,
+                        content_tokens bigint)
                 ),
                 previous AS (
                     SELECT d.document_id, d.storage_key FROM {table} d
@@ -512,10 +520,10 @@ class PostgresKnowledgeStore(KnowledgeStore):
                 ),
                 upsert AS (
                     INSERT INTO {table} (bank_id, document_id, filename, content_type, media_type, size_bytes,
-                        storage_key, content_hash, status, error, tags, source_document_id)
+                        storage_key, content_hash, status, error, tags, source_document_id, content_tokens)
                     SELECT $1, document_id, filename, content_type, media_type, size_bytes, storage_key,
                         content_hash, status, NULL, ARRAY(SELECT jsonb_array_elements_text(tags)),
-                        source_document_id
+                        source_document_id, content_tokens
                     FROM input
                     ON CONFLICT (bank_id, document_id) DO UPDATE SET
                         filename = EXCLUDED.filename,
@@ -523,7 +531,7 @@ class PostgresKnowledgeStore(KnowledgeStore):
                         size_bytes = EXCLUDED.size_bytes, storage_key = EXCLUDED.storage_key,
                         content_hash = EXCLUDED.content_hash, status = EXCLUDED.status, error = NULL,
                         tags = EXCLUDED.tags, source_document_id = EXCLUDED.source_document_id,
-                        updated_at = now()
+                        content_tokens = EXCLUDED.content_tokens, updated_at = now()
                 )
                 SELECT document_id, storage_key FROM previous
                 """,
@@ -1137,6 +1145,9 @@ class PostgresKnowledgeStore(KnowledgeStore):
             rows = await conn.fetch(
                 f"""
                 SELECT bank_id, media_type, status, COUNT(*) AS documents, COALESCE(SUM(passage_count), 0) AS passages,
+                       -- Only passage-bearing documents: a split parent holds a content_tokens figure but
+                       -- no passages, and its content is billed via its children (which do hold passages).
+                       COALESCE(SUM(content_tokens) FILTER (WHERE passage_count > 0), 0) AS content_tokens,
                        MAX(updated_at) AS last_at
                 FROM {fq_table("kb_documents")} WHERE bank_id = ANY($1::text[])
                 GROUP BY bank_id, media_type, status
@@ -1149,6 +1160,7 @@ class PostgresKnowledgeStore(KnowledgeStore):
             n = int(r["documents"])
             s.document_count += n
             s.passage_count += int(r["passages"])
+            s.content_tokens += int(r["content_tokens"])
             s.by_media_type[r["media_type"]] = s.by_media_type.get(r["media_type"], 0) + n
             if r["last_at"] is not None and (s.last_document_at is None or r["last_at"] > s.last_document_at):
                 s.last_document_at = r["last_at"]
@@ -1184,8 +1196,11 @@ def page_score(primary: float, roles: dict[str, list[float]], text_weight: float
     once the page is in the rescored top, and a whole-page text vector where an older ingest stored one);
     score = (1 - w) * image + w * text, w = ``kb_pdf_text_weight`` (default 0.7). That beat one
     blended page vector by ~7 nDCG@10.
+    A text passage: the better of its own vector and its window's (``media.TEXT_WINDOW_TOKENS``).
     Every other passage has only its primary vector, so its score is that vector's similarity.
     """
+    if roles.get("window"):  # a text passage: the better of itself and its window
+        return max(primary, *roles["window"])
     image = 0.5 * primary + 0.5 * max(roles["band"]) if roles.get("band") else primary
     texts = roles.get("page_text", []) + roles.get("unit", []) + roles.get("sentence", [])
     if not texts:
