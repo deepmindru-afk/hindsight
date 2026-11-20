@@ -10,7 +10,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
     },
-    "version": "1.2.2"
+    "version": "1.2.3"
   },
   "paths": {
     "/health": {
@@ -10549,6 +10549,18 @@
             ],
             "title": "Mcp Enabled Tools",
             "description": "MCP tool allowlist for this bank (None = all tools)"
+          },
+          "mcp_server_instructions": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mcp Server Instructions",
+            "description": "Instructions sent to MCP clients in the initialize response when they connect to this bank"
           },
           "knowledge_banks": {
             "anyOf": [
