@@ -860,6 +860,8 @@ ENV_ADMISSION_REFLECT_MAX_IN_FLIGHT = "HINDSIGHT_API_ADMISSION_REFLECT_MAX_IN_FL
 ENV_ADMISSION_REFLECT_MAX_WAIT_MS = "HINDSIGHT_API_ADMISSION_REFLECT_MAX_WAIT_MS"
 ENV_ADMISSION_RETAIN_MAX_IN_FLIGHT = "HINDSIGHT_API_ADMISSION_RETAIN_MAX_IN_FLIGHT"
 ENV_ADMISSION_RETAIN_MAX_WAIT_MS = "HINDSIGHT_API_ADMISSION_RETAIN_MAX_WAIT_MS"
+ENV_ADMISSION_KB_SEARCH_MAX_IN_FLIGHT = "HINDSIGHT_API_ADMISSION_KB_SEARCH_MAX_IN_FLIGHT"
+ENV_ADMISSION_KB_SEARCH_MAX_WAIT_MS = "HINDSIGHT_API_ADMISSION_KB_SEARCH_MAX_WAIT_MS"
 ENV_RECALL_CONNECTION_BUDGET = "HINDSIGHT_API_RECALL_CONNECTION_BUDGET"
 ENV_RECALL_MAX_QUERY_TOKENS = "HINDSIGHT_API_RECALL_MAX_QUERY_TOKENS"
 ENV_RECALL_DIAGNOSTIC_PHASES = "HINDSIGHT_API_RECALL_DIAGNOSTIC_PHASES"
@@ -1019,6 +1021,8 @@ ENV_KB_RERANKER_MAX_TOKENS = "HINDSIGHT_API_KB_RERANKER_MAX_TOKENS"
 ENV_KB_RERANKER_TOKENIZER = "HINDSIGHT_API_KB_RERANKER_TOKENIZER"
 ENV_KB_RERANKER_IMAGES = "HINDSIGHT_API_KB_RERANKER_IMAGES"
 ENV_KB_RERANKER_QUERY_IMAGES = "HINDSIGHT_API_KB_RERANKER_QUERY_IMAGES"
+# Whether a search that leaves enable_reranking unset is reranked; false: only an explicit true reranks.
+ENV_KB_ENABLE_RERANKING = "HINDSIGHT_API_KB_ENABLE_RERANKING"
 # Media types (document, image, audio, video, text) this server refuses to ingest, comma-separated,
 # whatever its embedder could embed: e.g. "video,audio" to skip the cost of decoding clips.
 ENV_KB_DISABLED_MEDIA_TYPES = "HINDSIGHT_API_KB_DISABLED_MEDIA_TYPES"
@@ -1346,6 +1350,7 @@ PROVIDER_DEFAULT_MODELS = {
     "chatgpt": "gpt-6-luna",
     "claude-code": "claude-sonnet-5-5",
     "cursor": "auto",
+    "antigravity": "gemini-3.8-flash-low",
     "github-copilot": "gpt-5.6-terra",
     "mock": "mock-model",
     "none": "none",
@@ -1793,8 +1798,8 @@ DECISION_MODEL_PROVIDER_DEFAULTS = {
     "openai": _DecisionProviderDefaults(model="gpt-6-luna", base_url="https://api.openai.com"),
 }
 DECISION_MODEL_PROVIDERS = ("none", *DECISION_MODEL_PROVIDER_DEFAULTS)
-# Providers whose endpoint is System One itself (<base_url>/v1/systemone), which reflect's
-# client (TypeSafeCrossEncoder) speaks.
+# Providers whose endpoint is System One itself (<base_url>/v1/systemone): the ones reflect's
+# decision-orchestrated mode runs on (MemoryEngine._reflect_decision_model).
 SYSTEM_ONE_DECISION_MODEL_PROVIDERS = frozenset({"hindsight", "typesafe"})
 DEFAULT_DECISION_MODEL_PROVIDER = "none"
 DEFAULT_DECISION_MODEL_TIMEOUT = 60.0
@@ -1981,6 +1986,11 @@ DEFAULT_ADMISSION_REFLECT_MAX_WAIT_MS = 5000
 DEFAULT_ADMISSION_RETAIN_IN_FLIGHT_PER_CORE = 32
 DEFAULT_ADMISSION_RETAIN_MAX_IN_FLIGHT = 0
 DEFAULT_ADMISSION_RETAIN_MAX_WAIT_MS = 2000
+# Knowledge-bank search is a read like recall (embed the query, search, maybe rerank),
+# so it gets recall's depth and patience.
+DEFAULT_ADMISSION_KB_SEARCH_IN_FLIGHT_PER_CORE = 16
+DEFAULT_ADMISSION_KB_SEARCH_MAX_IN_FLIGHT = 0
+DEFAULT_ADMISSION_KB_SEARCH_MAX_WAIT_MS = 30000
 DEFAULT_RECALL_CONNECTION_BUDGET = 4  # Max concurrent DB connections per recall operation
 DEFAULT_RECALL_MAX_QUERY_TOKENS = 500  # Maximum tokens allowed in recall query
 DEFAULT_RECALL_DIAGNOSTIC_PHASES = True  # Record the subset (diagnostic=true) recall phase metrics
@@ -2175,9 +2185,9 @@ DEFAULT_DEFAULT_TIMEZONE = "UTC"  # IANA zone a retain timestamp with no UTC off
 # Document transfer defaults (export/import enabled by default; gated independently)
 DEFAULT_ENABLE_DOCUMENT_EXPORT_API = True
 DEFAULT_ENABLE_DOCUMENT_IMPORT_API = True
-# Knowledge banks ship hidden while they are being built: off, their HTTP routes answer 404, their
-# reflect ignores linked knowledge banks and the UI hides them.
-DEFAULT_ENABLE_KB = False
+# Off, the knowledge bank HTTP routes answer 404, reflect ignores linked knowledge banks and the UI
+# hides them.
+DEFAULT_ENABLE_KB = True
 
 # Observations defaults (consolidated knowledge from facts)
 DEFAULT_ENABLE_OBSERVATIONS = True  # Observations enabled by default
@@ -3689,6 +3699,11 @@ class HindsightConfig:
     llm_strict_schema_retain: bool
     llm_strict_schema_reflect: bool
     llm_strict_schema_consolidation: bool
+    # Reflect's tool turns (every loop turn and the closing ``done``). Held to the schema
+    # unless HINDSIGHT_API_LLM_STRICT_SCHEMA_REFLECT says false: they always were, and small
+    # models need it to follow a forced turn, so the global default (false) does not reach
+    # them. A model that runs away under the grammar is taken off it with that flag (#6673).
+    llm_strict_schema_reflect_tool_turns: bool = field(default=True, kw_only=True)
     llm_supports_string_pattern: bool = field(
         default=DEFAULT_LLM_SUPPORTS_STRING_PATTERN,
         kw_only=True,
@@ -4031,6 +4046,8 @@ class HindsightConfig:
     admission_reflect_max_wait_seconds: float
     admission_retain_max_in_flight: int
     admission_retain_max_wait_seconds: float
+    admission_kb_search_max_in_flight: int
+    admission_kb_search_max_wait_seconds: float
     recall_connection_budget: int
     recall_max_query_tokens: int
     recall_diagnostic_phases: bool
@@ -4095,7 +4112,7 @@ class HindsightConfig:
     enable_file_upload_api: bool
     file_delete_after_retain: bool
     store_document_text: bool  # When False, store NULL original_text / empty chunk_text
-    default_timezone: str  # IANA zone for retain times that carry no UTC offset
+    default_timezone: str  # IANA zone for retain times with no UTC offset, and for times shown to the LLM
     enable_document_export_api: bool
     enable_document_import_api: bool
     enable_kb: bool
@@ -4445,6 +4462,8 @@ class HindsightConfig:
     # Also send the picture of a search by an image as the rerank query (an image object, not a string);
     # needs kb_reranker_images. Off: the query goes as its text, and a search with no text is not reranked.
     kb_reranker_query_images: bool = False
+    # What a search that leaves enable_reranking unset gets; false: only an explicit true reranks.
+    kb_enable_reranking: bool = True
     kb_disabled_media_types: frozenset[str] = frozenset()
     #: The "text" knowledge provider's own embeddings config (HINDSIGHT_API_KB_TEXT_EMBEDDINGS_*),
     #: or None to use the memory banks' embedder.
@@ -5141,6 +5160,8 @@ class HindsightConfig:
             llm_strict_schema_retain=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_RETAIN),
             llm_strict_schema_reflect=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_REFLECT),
             llm_strict_schema_consolidation=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_CONSOLIDATION),
+            llm_strict_schema_reflect_tool_turns=os.getenv(ENV_LLM_STRICT_SCHEMA_REFLECT, "true").strip().lower()
+            in ("true", "1"),
             llm_supports_string_pattern=_parse_boolean_env(
                 ENV_LLM_SUPPORTS_STRING_PATTERN,
                 DEFAULT_LLM_SUPPORTS_STRING_PATTERN,
@@ -5817,6 +5838,20 @@ class HindsightConfig:
                 os.getenv(ENV_ADMISSION_RETAIN_MAX_WAIT_MS, str(DEFAULT_ADMISSION_RETAIN_MAX_WAIT_MS))
             )
             / 1000.0,
+            admission_kb_search_max_in_flight=admission_in_flight_for(
+                int(
+                    os.getenv(
+                        ENV_ADMISSION_KB_SEARCH_MAX_IN_FLIGHT,
+                        str(DEFAULT_ADMISSION_KB_SEARCH_MAX_IN_FLIGHT),
+                    )
+                ),
+                DEFAULT_ADMISSION_KB_SEARCH_IN_FLIGHT_PER_CORE,
+                int(os.getenv(ENV_WORKERS, "1")),
+            ),
+            admission_kb_search_max_wait_seconds=float(
+                os.getenv(ENV_ADMISSION_KB_SEARCH_MAX_WAIT_MS, str(DEFAULT_ADMISSION_KB_SEARCH_MAX_WAIT_MS))
+            )
+            / 1000.0,
             recall_connection_budget=int(
                 os.getenv(ENV_RECALL_CONNECTION_BUDGET, str(DEFAULT_RECALL_CONNECTION_BUDGET))
             ),
@@ -5976,6 +6011,7 @@ class HindsightConfig:
             kb_reranker_tokenizer=os.getenv(ENV_KB_RERANKER_TOKENIZER) or None,
             kb_reranker_images=_parse_boolean_env(ENV_KB_RERANKER_IMAGES, True),
             kb_reranker_query_images=_parse_boolean_env(ENV_KB_RERANKER_QUERY_IMAGES, False),
+            kb_enable_reranking=_parse_boolean_env(ENV_KB_ENABLE_RERANKING, True),
             kb_image_tokens=int(os.getenv(ENV_KB_IMAGE_TOKENS, str(DEFAULT_KB_IMAGE_TOKENS))),
             kb_disabled_media_types=_parse_kb_media_types(os.getenv(ENV_KB_DISABLED_MEDIA_TYPES)),
             kb_max_file_mb=int(os.getenv(ENV_KB_MAX_FILE_MB, str(DEFAULT_KB_MAX_FILE_MB))),
