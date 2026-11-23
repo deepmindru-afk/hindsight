@@ -912,6 +912,10 @@ ENV_LLM_CODEX_HOME = "HINDSIGHT_API_LLM_CODEX_HOME"
 # credentials.json and this host's host_id. Server-level only.
 ENV_LLM_CHATGPT_HOME = "HINDSIGHT_API_LLM_CHATGPT_HOME"
 
+# claude-code provider: a settings file (e.g. an apiKeyHelper) the spawned CLI
+# loads despite its isolation (issue #6500). Server-level only.
+ENV_LLM_CLAUDE_CODE_SETTINGS = "HINDSIGHT_API_LLM_CLAUDE_CODE_SETTINGS"
+
 # xai-oauth provider. The token store is written by the `login` entrypoint and read on
 # every call; the rest exist so a deployment can point at a different OAuth app.
 ENV_XAI_OAUTH_TOKEN_PATH = "HINDSIGHT_API_XAI_OAUTH_TOKEN_PATH"
@@ -1287,6 +1291,7 @@ ENV_RECALL_STRATEGY_BOOSTS = "HINDSIGHT_API_RECALL_STRATEGY_BOOSTS"
 ENV_RECENCY_DECAY_FUNCTION = "HINDSIGHT_API_RECENCY_DECAY_FUNCTION"
 ENV_RECENCY_DECAY_LINEAR_WINDOW_DAYS = "HINDSIGHT_API_RECENCY_DECAY_LINEAR_WINDOW_DAYS"
 ENV_RECENCY_DECAY_HALFLIFE_DAYS = "HINDSIGHT_API_RECENCY_DECAY_HALFLIFE_DAYS"
+ENV_RECENCY_ALPHA = "HINDSIGHT_API_RECENCY_ALPHA"
 
 # Audit log settings
 # AUDIT_LOG_ENABLED is the deployment-wide default and is overridable per bank
@@ -1442,6 +1447,9 @@ DEFAULT_LLM_CODEX_HOME = None
 # chatgpt credentials directory (None = ~/.hindsight/chatgpt)
 DEFAULT_LLM_CHATGPT_HOME = None
 
+# claude-code settings file (None = the CLI loads no settings file)
+DEFAULT_LLM_CLAUDE_CODE_SETTINGS = None
+
 # Vertex AI defaults
 DEFAULT_LLM_VERTEXAI_PROJECT_ID = None  # Required for Vertex AI
 DEFAULT_LLM_VERTEXAI_REGION = "us-central1"
@@ -1589,6 +1597,8 @@ DEFAULT_RECENCY_DECAY_FUNCTION = "linear"
 DEFAULT_RECENCY_DECAY_LINEAR_WINDOW_DAYS = 365.0
 # Exponential: age (days) at which the recency signal is neutral (0.5).
 DEFAULT_RECENCY_DECAY_HALFLIFE_DAYS = 90.0
+# How much recency can move a recall score: at most ±(alpha/2). 0.2 → ±10%.
+DEFAULT_RECENCY_ALPHA = 0.2
 # Retrieval arms that can be boosted; mirrors fusion.py source_names.
 RECALL_STRATEGY_NAMES = ("semantic", "bm25", "graph", "temporal")
 # User-facing priority levels. Kept in sync with recall_boost.BOOST_LEVELS by a
@@ -3759,6 +3769,10 @@ class HindsightConfig:
     # only, for the same reason as llm_codex_home.
     llm_chatgpt_home: str | None
 
+    # claude-code settings file passed to the spawned CLI (None = none). Server-level
+    # only: an apiKeyHelper in it runs a command, so a bank must not point at one.
+    llm_claude_code_settings: str | None
+
     # Vertex AI configuration
     llm_vertexai_project_id: str | None
     llm_vertexai_region: str
@@ -3952,6 +3966,7 @@ class HindsightConfig:
     recency_decay_function: str
     recency_decay_linear_window_days: float
     recency_decay_halflife_days: float
+    recency_alpha: float
     reranker_cohere_api_key: str | None
     reranker_cohere_model: str
     reranker_cohere_base_url: str | None
@@ -4586,6 +4601,8 @@ class HindsightConfig:
         "kb_reranker_url",
         # chatgpt: points at a directory holding an OAuth grant.
         "llm_chatgpt_home",
+        # claude-code: a settings file whose apiKeyHelper mints the auth key.
+        "llm_claude_code_settings",
     }
 
     # CONFIGURABLE_FIELDS: Safe behavioral settings that can be customized per-tenant/bank
@@ -4861,6 +4878,8 @@ class HindsightConfig:
                 f"Invalid entity_trgm_similarity_threshold: {self.entity_trgm_similarity_threshold}. "
                 "Must be greater than 0 and at most 1."
             )
+        if not (0.0 <= self.recency_alpha <= 1.0):
+            raise ValueError(f"Invalid recency_alpha: {self.recency_alpha}. Must be between 0 and 1.")
         if not (0.0 < self.entity_intrabatch_merge_similarity <= 1.0):
             raise ValueError(
                 f"Invalid entity_intrabatch_merge_similarity: {self.entity_intrabatch_merge_similarity}. "
@@ -5205,6 +5224,8 @@ class HindsightConfig:
             # Codex (ChatGPT OAuth) credentials directory
             llm_codex_home=os.getenv(ENV_LLM_CODEX_HOME) or DEFAULT_LLM_CODEX_HOME,
             llm_chatgpt_home=os.getenv(ENV_LLM_CHATGPT_HOME, "").strip() or DEFAULT_LLM_CHATGPT_HOME,
+            llm_claude_code_settings=os.getenv(ENV_LLM_CLAUDE_CODE_SETTINGS, "").strip()
+            or DEFAULT_LLM_CLAUDE_CODE_SETTINGS,
             # Vertex AI
             llm_vertexai_project_id=os.getenv(ENV_LLM_VERTEXAI_PROJECT_ID) or DEFAULT_LLM_VERTEXAI_PROJECT_ID,
             llm_vertexai_region=os.getenv(ENV_LLM_VERTEXAI_REGION, DEFAULT_LLM_VERTEXAI_REGION),
@@ -5632,6 +5653,7 @@ class HindsightConfig:
             recency_decay_halflife_days=float(
                 os.getenv(ENV_RECENCY_DECAY_HALFLIFE_DAYS, str(DEFAULT_RECENCY_DECAY_HALFLIFE_DAYS))
             ),
+            recency_alpha=float(os.getenv(ENV_RECENCY_ALPHA, str(DEFAULT_RECENCY_ALPHA))),
             # Cohere reranker (with backward-compatible fallback to shared API key)
             reranker_cohere_api_key=os.getenv(ENV_RERANKER_COHERE_API_KEY) or os.getenv(ENV_COHERE_API_KEY),
             reranker_cohere_model=os.getenv(ENV_RERANKER_COHERE_MODEL, DEFAULT_RERANKER_COHERE_MODEL),
