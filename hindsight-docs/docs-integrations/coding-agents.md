@@ -7,6 +7,7 @@ description: "One Hindsight memory plugin for coding agents — per-repo memory 
 {/* GENERATED from hindsight-integrations/coding-agents/README.md — edit that file, then run
     node hindsight-docs/scripts/sync-coding-agents-doc.mjs */}
 
+import useBaseUrl from '@docusaurus/useBaseUrl';
 import Figure from '@site/src/components/Figure';
 import codingAgents from '@site/figures/coding-agents.json';
 import CodingAgentsChart from '@site/src/components/CodingAgentsChart';
@@ -90,7 +91,7 @@ local daemon on this machine (see Where memory lives). Scripted installs pass
 
 Same command, only the harness name changes. Run after installing the package globally.
 
-#### <img src="/img/harness/claude-code.png" alt="" width="20" height="20" /> Claude Code
+#### <img src={useBaseUrl("/img/harness/claude-code.png")} alt="" width="20" height="20" /> Claude Code
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install claude-code
@@ -98,7 +99,7 @@ npx @vectorize-io/hindsight-coding-agents install claude-code
 
 3 hooks in `~/.claude/settings.json`, MCP via `claude mcp add` (user scope), and the companion skill.
 
-#### <img src="/img/harness/codex.svg" alt="" width="20" height="20" /> Codex CLI
+#### <img src={useBaseUrl("/img/harness/codex.svg")} alt="" width="20" height="20" /> Codex CLI
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install codex
@@ -106,7 +107,7 @@ npx @vectorize-io/hindsight-coding-agents install codex
 
 3 hooks in `~/.codex/hooks.json` plus `[mcp_servers]` in `config.toml` (needs `codex_hooks = true`).
 
-#### <img src="/img/harness/dcode.svg" alt="" width="20" height="20" /> DeepAgents Dcode
+#### <img src={useBaseUrl("/img/harness/dcode.svg")} alt="" width="20" height="20" /> DeepAgents Dcode
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install dcode
@@ -127,7 +128,7 @@ capture an initiative or ingest a document. For the same reason Dcode gets no on
 survey: the survey runs only under the current agent's own CLI, and only Claude Code, Codex,
 Antigravity and opencode v1 have a headless, read-only recipe for it.
 
-#### <img src="/img/harness/opencode.png" alt="" width="20" height="20" /> opencode
+#### <img src={useBaseUrl("/img/harness/opencode.png")} alt="" width="20" height="20" /> opencode
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install opencode
@@ -135,7 +136,7 @@ npx @vectorize-io/hindsight-coding-agents install opencode
 
 A plugin entry in `~/.config/opencode/opencode.json` — native tools, no MCP needed.
 
-#### <img src="/img/harness/opencode.png" alt="" width="20" height="20" /> opencode 2
+#### <img src={useBaseUrl("/img/harness/opencode.png")} alt="" width="20" height="20" /> opencode 2
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install opencode2
@@ -155,7 +156,7 @@ The companion skill is identical too, but it is registered in memory through v2'
 than copied into a skills directory — opencode2 has none of its own, and the two it reads belong to
 other agents.
 
-#### <img src="/img/harness/kilo.svg" alt="" width="20" height="20" /> Kilo CLI
+#### <img src={useBaseUrl("/img/harness/kilo.svg")} alt="" width="20" height="20" /> Kilo CLI
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install kilo
@@ -163,7 +164,7 @@ npx @vectorize-io/hindsight-coding-agents install kilo
 
 A plugin entry in `~/.config/kilo/kilo.json[c]`.
 
-#### <img src="/img/harness/cursor-cli.svg" alt="" width="20" height="20" /> Cursor CLI
+#### <img src={useBaseUrl("/img/harness/cursor-cli.svg")} alt="" width="20" height="20" /> Cursor CLI
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install cursor-cli
@@ -171,7 +172,7 @@ npx @vectorize-io/hindsight-coding-agents install cursor-cli
 
 Hooks in `~/.cursor/hooks.json`, `~/.cursor/mcp.json`, and the companion skill.
 
-#### <img src="/img/harness/copilot-cli.svg" alt="" width="20" height="20" /> GitHub Copilot CLI
+#### <img src={useBaseUrl("/img/harness/copilot-cli.svg")} alt="" width="20" height="20" /> GitHub Copilot CLI
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install copilot-cli
@@ -179,7 +180,7 @@ npx @vectorize-io/hindsight-coding-agents install copilot-cli
 
 `~/.copilot/hooks/`, `mcp-config.json`, and the companion skill.
 
-#### <img src="/img/harness/grok-build.svg" alt="" width="20" height="20" /> Grok Build
+#### <img src={useBaseUrl("/img/harness/grok-build.svg")} alt="" width="20" height="20" /> Grok Build
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install grok-build
@@ -191,7 +192,7 @@ Grok, so a machine wired for both hosts records each Grok session once. Grok pas
 the model only from tool hooks, so the session and prompt context arrive with the result of the
 agent's first tool call after each prompt (a `PostToolUse` hook).
 
-#### <img src="/img/harness/qwen-code.svg" alt="" width="20" height="20" /> Qwen Code
+#### <img src={useBaseUrl("/img/harness/qwen-code.svg")} alt="" width="20" height="20" /> Qwen Code
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install qwen-code
@@ -205,7 +206,7 @@ Native hooks in `~/.qwen/settings.json`, plus MCP and the companion skill.
 > continuations, so interactive sessions recall once per prompt while headless (`qwen -p`),
 > `serve`, SDK and ACP sessions seed and retain but do not recall.
 
-#### <img src="/img/harness/kimi-code.svg" alt="" width="20" height="20" /> Kimi Code
+#### <img src={useBaseUrl("/img/harness/kimi-code.svg")} alt="" width="20" height="20" /> Kimi Code
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install kimi-code
@@ -218,7 +219,7 @@ Native hooks in `~/.kimi-code/config.toml`, plus MCP in `~/.kimi-code/mcp.json` 
 > recalled memory arrives on the first prompt instead, as a `<hook_result>` block. Sessions are
 > retained from every agent's `wire.jsonl` under the session directory, subagents included.
 
-#### <img src="/img/harness/factory-droid.svg" alt="" width="20" height="20" /> Factory Droid
+#### <img src={useBaseUrl("/img/harness/factory-droid.svg")} alt="" width="20" height="20" /> Factory Droid
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install factory-droid
@@ -233,7 +234,7 @@ user-managed MCP server already named `hindsight`. Droid's hook protocol matches
 injection use the same protocol; write-back also handles Droid's cancellation notification because
 Droid does not emit `Stop` after a cancelled turn.
 
-#### <img src="/img/harness/zcode.svg" alt="" width="20" height="20" /> ZCode
+#### <img src={useBaseUrl("/img/harness/zcode.svg")} alt="" width="20" height="20" /> ZCode
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install zcode
@@ -257,7 +258,7 @@ refuses to touch an MCP server named `hindsight` that it did not write.
 > appending each new turn to the same session document. `--import-conversations` is therefore not
 > available for ZCode: there is no past history on disk to backfill from.
 
-#### <img src="/img/harness/traecode.png" alt="" width="20" height="20" /> TraeCode
+#### <img src={useBaseUrl("/img/harness/traecode.png")} alt="" width="20" height="20" /> TraeCode
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install traecode
@@ -307,7 +308,7 @@ once there.
 > `last_assistant_message`. `--import-conversations` is therefore not available for TraeCode:
 > there is no past history on disk to backfill from.
 
-#### <img src="/img/harness/antigravity-cli.png" alt="" width="20" height="20" /> Antigravity CLI
+#### <img src={useBaseUrl("/img/harness/antigravity-cli.png")} alt="" width="20" height="20" /> Antigravity CLI
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install agy
@@ -315,7 +316,7 @@ npx @vectorize-io/hindsight-coding-agents install agy
 
 Lifecycle hooks, MCP, and the `Hindsight · <bank>` status line.
 
-#### <img src="/img/harness/devin-cli.svg" alt="" width="20" height="20" /> Devin CLI
+#### <img src={useBaseUrl("/img/harness/devin-cli.svg")} alt="" width="20" height="20" /> Devin CLI
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install devin-cli
@@ -323,7 +324,7 @@ npx @vectorize-io/hindsight-coding-agents install devin-cli
 
 Hooks in `~/.config/devin/config.json` plus MCP. Needs Node 22.5+ — see below.
 
-#### <img src="/img/harness/cline-cli.svg" alt="" width="20" height="20" /> Cline CLI
+#### <img src={useBaseUrl("/img/harness/cline-cli.svg")} alt="" width="20" height="20" /> Cline CLI
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install cline-cli
@@ -331,7 +332,7 @@ npx @vectorize-io/hindsight-coding-agents install cline-cli
 
 A native plugin via `cline plugin install`, plus MCP and the companion skill.
 
-#### <img src="/img/harness/pi.svg" alt="" width="20" height="20" /> pi
+#### <img src={useBaseUrl("/img/harness/pi.svg")} alt="" width="20" height="20" /> pi
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install pi
@@ -340,28 +341,38 @@ npx @vectorize-io/hindsight-coding-agents install pi
 An extension entry in `~/.pi/agent/settings.json`, plus the companion skill in
 `~/.pi/agent/skills` — native tools, no MCP needed.
 
-This command is the only supported route, for pi and for Prime Agent below. Installing us as a pi
-package (`pi install npm:@vectorize-io/hindsight-coding-agents`) is deliberately not wired: both
-hosts read the same `pi` key of a package's `package.json`, and that key can only name one entry —
-whichever host it did not name would load the other's bundle and report itself as the wrong agent,
-taking that harness's config section and stamping every document it retains with it. So the package
-carries no `pi` key at all, and each host is pointed at its own bundle by the install command above.
+This command is the only supported route. Installing us as a pi package (`pi install
+npm:@vectorize-io/hindsight-coding-agents`) is deliberately not wired: Prime Agent 0.9 read the same
+`pi` key of a package's `package.json`, and a key that names one entry for two hosts makes one of
+them report itself as the wrong agent. So the package carries no `pi` key at all.
 
-#### <img src="/img/harness/prime-agent.svg" alt="" width="20" height="20" /> Prime Agent
+#### <img src={useBaseUrl("/img/harness/prime-agent.svg")} alt="" width="20" height="20" /> Prime Agent
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install prime-agent
 ```
 
-Prime Agent is a fork of pi, so it is wired the same way: an extension entry, here in
-`~/.prime/agent/settings.json`, plus the companion skill in `~/.prime/agent/skills` — native tools,
-no MCP needed. Installing both is fine and expected:
-each host loads its own entry from its own settings file, and like every other pair of agents they
-**share one bank per repo** (the default `coding-agent::{gitProject}`), so what you tell pi is there
-when you open Prime Agent. Separate entries are what keeps each side attributable — its own
-`harnesses.<name>` config section, and its own agent stamped on every document it retains.
+Needs Prime Agent **0.10 or later** (the Rust rewrite); 0.9 and earlier are no longer supported.
+0.10 removed the extension system and has no hooks, so the install writes the three things it does
+load:
 
-#### <img src="/img/harness/dsh.svg" alt="" width="20" height="20" /> DeepSeek Harness
+- an MCP server, `hindsight`, in `~/.prime/agent/settings.json`. Prime's agent calls MCP tools from
+  Python (`await mcp.call_tool("hindsight", "hindsight_reflect", {...})`), and starts the server
+  on the first call. While it runs, the server also saves the session's transcript to memory.
+- a short block in `~/.prime/agent/AGENTS.md` (or your existing global `CLAUDE.md`) asking the agent
+  to ask memory (`hindsight_reflect`) at the start of every task. Without a hook this is the only
+  way to bring recall in, so it is up to the model to follow it.
+- the companion skill in `~/.prime/agent/skills`.
+
+A session where the agent never calls a Hindsight tool is not saved, because the server never
+started. `install prime-agent --import-conversations`, run in the repo, backfills those from
+Prime's session files. Re-running the install on a machine wired for 0.9 removes the old
+`extensions` entry, which 0.10 ignores. Uninstall removes all three.
+
+pi and Prime Agent **share one bank per repo** (the default `coding-agent::{gitProject}`), like any
+other pair of agents, and each stamps its own agent on the documents it retains.
+
+#### <img src={useBaseUrl("/img/harness/dsh.svg")} alt="" width="20" height="20" /> DeepSeek Harness
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install dsh
@@ -380,7 +391,7 @@ too: the package ships the profile patch layer, so nothing else needs editing. E
 companion skill — a plugin wired by the host's own plugin manager installs it itself on the first
 session, since that route never runs our installer.
 
-#### <img src="/img/harness/workbuddy.png" alt="" width="20" height="20" /> WorkBuddy
+#### <img src={useBaseUrl("/img/harness/workbuddy.png")} alt="" width="20" height="20" /> WorkBuddy
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install workbuddy
@@ -392,7 +403,7 @@ companion skill in `~/.workbuddy/skills`. WorkBuddy (Tencent's AI workbench) is 
 transcript schema (`type:"message"` records carrying top-level `role`/`content`), which the
 package's own reader normalizes.
 
-#### <img src="/img/harness/codebuddy.png" alt="" width="20" height="20" /> CodeBuddy
+#### <img src={useBaseUrl("/img/harness/codebuddy.png")} alt="" width="20" height="20" /> CodeBuddy
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install codebuddy
@@ -596,7 +607,7 @@ what reads it:
 | host                                                                                                        | reads the file                                                      | an edit applies            |
 | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | -------------------------- |
 | hook harnesses (Claude Code, Codex CLI, Cursor CLI, GitHub Copilot CLI, Grok Build, Antigravity CLI, Devin) | once per hook invocation — each hook is its own short-lived process | on your next prompt        |
-| persistent plugins (opencode, opencode 2, Kilo CLI, Cline CLI, pi, Prime Agent, DeepSeek Harness)           | once per workspace, when the host loads the plugin                  | after restarting the agent |
+| persistent plugins (opencode, opencode 2, Kilo CLI, Cline CLI, pi, DeepSeek Harness)                        | once per workspace, when the host loads the plugin                  | after restarting the agent |
 | the MCP server behind the `hindsight_*` tools                                                               | once at startup                                                     | in your next session       |
 
 `apiToken` is the exception. Every host re-reads it when the server rejects a request, so enabling
@@ -675,12 +686,14 @@ hook by Codex...), so one shared config serves several agents side by side:
 | `reflectToolTimeoutMs`  | `330000`                             | timeout for the agent-invoked `hindsight_reflect` tool — a call the agent waits on, whose high-budget synthesis on a populated bank runs for minutes. Defaults above the server's own reflect wall timeout (`HINDSIGHT_API_REFLECT_WALL_TIMEOUT`, 300s) so the server decides when to give up. Unset, it inherits an explicitly raised `reflectTimeoutMs`, but a short one never lowers it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `injectTimeoutMs`       | `7000`                               | retrieval timeout in milliseconds for `autoInject: "pages"` and `autoInject: "recall"`; also the **shared** budget for page search then recall after a reflect timeout/5xx (recall gets only the time left after page search). Set e.g. `2000` to limit turn latency or `15000` for a slower self-hosted bank. Environment fallback: `HINDSIGHT_INJECT_TIMEOUT_MS`. On hook harnesses, injection must fit the host's prompt-hook timeout (30s by default); for reflect with fallback, allow for **`reflectTimeoutMs` + `injectTimeoutMs`**, and raise the host hook's `timeout` when needed                                                                                                                                                                                                                                                                                                                     |
 | `reflectBudget`         | `"high"`                             | reflect budget for the `hindsight_reflect` tool: `"low"`, `"mid"` or `"high"`. Drop it on a large bank where high-budget synthesis exceeds the server's wall timeout. The automatic session-start reflect always uses `"low"` to fit its hook window and is unaffected                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `autoInject`            | `"reflect"`                          | what to inject once, on the session's **first prompt**: `"reflect"` = a low-budget reflect synthesis (on timeout/5xx it falls back to page search, then recall); `"pages"` = the pages matching the prompt by search; `"recall"` = the bank's memories recalled for the prompt (what it asks for is `recallOptions`, observations by default); `"none"` = nothing — the agent searches pages first and reflects only when they are too shallow. `"pages"` and `"recall"` are retrieval only (no LLM), their time budget is `injectTimeoutMs`, and when one finds nothing for the prompt it tries again on the next one, up to 5 prompts                                                                                                                                                                                                                                                                         |
+| `autoInject`            | `"reflect"`                          | what to inject on the session's **first prompt** (and again every `autoInjectEveryTurns`, for `"pages"`/`"recall"`): `"reflect"` = a low-budget reflect synthesis (on timeout/5xx it falls back to page search, then recall); `"pages"` = the pages matching the prompt by search; `"recall"` = the bank's memories recalled for the prompt (what it asks for is `recallOptions`, observations by default); `"none"` = nothing — the agent searches pages first and reflects only when they are too shallow. `"pages"` and `"recall"` are retrieval only (no LLM), their time budget is `injectTimeoutMs`, and when one finds nothing for the prompt it tries again on the next one, up to 5 prompts                                                                                                                                                                                                            |
+| `autoInjectEveryTurns`  | `0`                                  | run a `"recall"` or `"pages"` `autoInject` again every N user turns, with the current prompt as the query, so a long session's memory follows its topic. `0` = first prompt only. Only the first run shows a notice. Ignored for `"reflect"`, which would put an LLM call in front of those prompts                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `autoReflect`           | `true`                               | **deprecated** — use `autoInject`. Still honoured (`false` = `autoInject: "none"`), ignored when `autoInject` is set, and logs a deprecation warning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `pageSearchLimit`       | `3`                                  | pages ONE search returns. Applies to every search of the bank — the `autoInject: "pages"` injection, the reflect fallback, and the agent's own `hindsight_search_pages` tool — because the limit lives on the client they all share                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `recallOptions`         | see description                      | overrides merged key-by-key into the body of every recall — the `autoInject: "recall"` source and the reflect fallback. Keys are the API's own recall parameters, passed straight through, so anything recall accepts is settable without a new option here; `query` is the one field it cannot replace. The default body is `{"types": ["observation"], "budget": "low", "max_tokens": 2000, "include": {"entities": null}}`, and what you set is merged over it one key at a time — `{"max_tokens": 4000}` changes the budget and leaves the rest alone. Observations are the consolidated layer, so they answer best per token, but a bank with **consolidation disabled never grows any** and the default recall comes back empty on it: set `{"types": ["world", "experience"]}` there, or `{"types": null}` for every type. File-only, like `retainMetadata` — an object does not flatten into an env var |
-| `toolGuideExtra`        | —                                    | your own guidance on how the agent should treat memory, added **after** the built-in tool guide (at session start and on every refresh) and after the crediting note returned with `hindsight_search_pages` results. It adds to the built-in text, never replaces it. Set it per harness or per bank like any other key, e.g. `"Memory is a past record, not current state: verify any claim against the code before acting on it."`                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `pageRefreshEveryTurns` | `1`                                  | refetch the pages and re-inject the page roster + tool guide every N user turns (`0` also means 1)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `writeTools`            | `true`                               | `false` = the two tools that write to the bank (`hindsight_capture_initiative`, `hindsight_ingest_document`) are not registered, and the agent is never told to call them — not in the tool guide, not in the correction lines. For a host that denies those tools. The codebase survey still gets `hindsight_ingest_document`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `toolGuideExtra`        | —                                    | your own guidance on how the agent should treat memory, added **after** the built-in tool guide (wherever the full guide is sent) and after the crediting note in the `hindsight_search_pages` tool description. It adds to the built-in text, never replaces it. Set it per harness or per bank like any other key, e.g. `"Memory is a past record, not current state: verify any claim against the code before acting on it."`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `pageRefreshEveryTurns` | `1`                                  | refetch the pages and re-inject the page roster every N user turns (`0` also means 1). The full tool guide goes out once per session; later refreshes are a one-line reminder                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `pageTriggerType`       | `"cron"`                             | when NEW pages refresh, i.e. what keeping them current costs — `"cron"` (default) on `pageTriggerCron` only and only when actually stale, `"auto-refresh"` after every consolidation that produced new material, `"manual"` never on their own. Auto-refresh is the most current and by far the most expensive: one synthesis per page per consolidation. Maps to the page's `trigger.refresh_cron`, or `trigger.refresh_after_consolidation` in the Hindsight API (`true` for auto-refresh, `false` for manual)                                                                                                                                                                                                                                                                                                                                                                                                |
 | `pageTriggerCron`       | `"H * * * *"`                        | schedule for `pageTriggerType: "cron"` — UTC, standard 5-field cron, e.g. `"0 3 * * *"`. The default is hourly, each page on its own hashed minute. Sets the page's `trigger.refresh_cron`, which the API treats as mutually exclusive with `refresh_after_consolidation`; a scheduled refresh is skipped when nothing changed. Write a field as `H` to give each page its own value there — see **Spreading refreshes with `H`** below                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `pages`                 | every page                           | per-page configuration for the seeded pages, keyed by page name (case-insensitive): `false` skips a page entirely, `{"source_query": "..."}` seeds it with your question instead of the built-in one. Omitted, all five pages are seeded with their built-in queries. This is the supported way to own a page's wording — the plugin re-syncs a page whose live query differs from the one it is configured to have, so a query edited through the API or the control plane is replaced on the next session. A skipped page is **not deleted**: one already seeded keeps its content and stops being re-synced. The scoping clause is appended to your query too, so a reworded page cannot start reporting a dependency's decisions as this project's. File-only, like `recallOptions`; in a `banks.<id>` section it replaces the global map rather than merging into it                                       |
